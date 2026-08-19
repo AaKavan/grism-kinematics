@@ -1,0 +1,167 @@
+# ----------------------------------------------------------------------------
+# basic abstract class as interface
+# ----------------------------------------------------------------------------
+
+summary:
+  name: ID15665
+  ra: 64.007840
+  dec: -24.148910
+  z: 1.1613   # SAPPHIRES EDR zspec for ID15665
+  lambda_rest: 1.875
+  filter: F444W
+  mode: kinematics  # kinematics/image. This will choose the loss function.
+  r_fit: 40
+
+
+# ----------------------------------------------------------------------------
+# 🧪 Initial Fitting Parameters
+# ----------------------------------------------------------------------------
+
+# 🔁 Cutout shift
+image: # must have R and C
+  R:
+    module: A
+    path: ['ID15665/R.fits', 0] # path, hdu
+    dx: 0
+    dy: 0
+  C:
+    module: A
+    path: ['ID15665/C.fits', 0]
+    # dx: image.R.dx
+    dx: 0
+    dy: 0
+
+# 💨 Velocity field
+velocity:
+  model: arctan
+  V_rot: 500.0
+  R_v: 3
+  x0_v: 40.0
+  # y0_v: velocity.x0_v
+  y0_v: 40
+  theta_v: 0
+  inc_v: 1.0
+
+
+# ----------------------------------------------------------------------------
+# 🧠 Fitting Strategy
+# ----------------------------------------------------------------------------
+
+fitting:
+  - method: Adam
+    maxiter: 2500
+    scheduler: StepLR
+    default:
+      lr: 0.05
+      min: -1e10
+      max: 1e10
+      fit: true
+    override:
+      image.R.dx, image.R.dy, image.C.dx, image.C.dy: 
+        lr: 0.5
+      # image.R.dx: 
+      #   # fit: false
+      # image.R.dy: 
+      #   # fit: false
+      # velocity.x0_v:
+      #   fit: false
+      # velocity.y0_v:
+      #   fit: false
+      velocity.theta_v:
+        fit: true
+      velocity.inc_v: 
+        min: 0
+        max: 1.57
+
+  - method: Adam
+    maxiter: 1500
+    scheduler: ReduceLROnPlateau
+    default:
+      lr: 0.003
+      min: -1e10
+      max: 1e10
+      fit: true
+    override:
+      velocity.theta_v:
+        fit: false
+      # velocity.inc_v:
+      #   min: 0
+      #   max: 0.2
+
+
+# ----------------------------------------------------------------------------
+# 🎲 MCMC posterior sampling (fit_MCMC)
+# ----------------------------------------------------------------------------
+# Optional block, read only by BaseFitter.fit_MCMC(). Ignored by fit_gradient().
+
+mcmc:
+  # Sample the free-parameter set of stage 1 (index 0): stage 2 freezes theta_v for
+  # the final polish, so sampling there would silently drop it. Stages share the
+  # parameter tensors, so the values fitted by fit_all() carry over regardless.
+  stage: 0
+  nwalkers: 32
+  nsteps: 8000
+  nburn: 2000
+  xy_iters: 40    # fixed-point iterations per likelihood call; 40 matches 200 to dchi2<0.01
+  xy_tol: 5e-3    # convergence tolerance of the post-hoc guard, on the frozen footprint
+  log_cadence: 200
+  seed: 42
+  # Written every checkpoint_every steps and atomically replaced, so a reboot or a
+  # kill costs at most that many steps instead of the whole multi-hour chain.
+  checkpoint: ../mcmc_results/ID15665_chain_checkpoint.npz
+  checkpoint_every: 500
+
+  noise:
+    fit_ln_f: true  # sample the noise-scale factor; expect ln_f ~ -0.4 (bilinear averaging)
+    # sigma_R / sigma_C default to a sigma-clipped background estimate of each cutout
+    # corr_area: 1.0  # do NOT set alongside fit_ln_f: they are 100% degenerate
+
+  # Gaussian ball the walkers start in, around the current (MAP) parameter values.
+  init_scatter:
+    velocity.V_rot:  2.0
+    velocity.R_v:    0.05
+    velocity.x0_v:   0.05
+    velocity.y0_v:   0.05
+    velocity.theta_v: 0.01
+    velocity.inc_v:  0.01
+    image.R.dx:      0.02
+    image.R.dy:      0.02
+    image.C.dx:      0.02
+    image.C.dy:      0.02
+    noise.ln_f:      0.05
+
+  # Defaults to uniform over each parameter's min/max clamp, which is +-1e10 here
+  # and so effectively unbounded -- set them explicitly.
+  priors:
+    # one-signed: (V_rot, theta_v) and (-V_rot, theta_v+pi) give an identical vz field
+    velocity.V_rot:   {type: uniform,     min: 50.0,   max: 1200.0}
+    # lower bound keeps the damped fixed-point iteration in its contracting regime
+    velocity.R_v:     {type: log_uniform, min: 0.5,    max: 40.0}
+    velocity.x0_v:    {type: gaussian,    mu: 40.0,    sigma: 2.0, min: 30.0, max: 50.0}
+    velocity.y0_v:    {type: gaussian,    mu: 40.0,    sigma: 2.0, min: 30.0, max: 50.0}
+    # one full period, with the mode (~2.33 rad) interior so walkers do not pile at a wrap
+    velocity.theta_v: {type: uniform,     min: 0.0,    max: 6.283185}
+    # Photometric inclination from the direct image, which is what breaks the
+    # V_rot--inc_v degeneracy (corr = -0.986 without it). From a PSF-convolved
+    # Sersic fit to the linear SCI mosaics with the core masked, via q = cos(inc_v)
+    # -- exact in DINGO's convention, since sersic_model_torch and
+    # arctangent_disk_velocity_model use the same deprojection form.
+    # Seven estimates across two bands and two methods (PSF-corrected Sersic with the
+    # core masked; iterated elliptical-annulus moments at three radial ranges):
+    #   0.585 0.603  (Sersic F444W, F200W)
+    #   0.621 0.642  (annuli F444W)
+    #   0.654 0.684 0.698  (annuli F200W)
+    # mean 0.6412; sigma below = method-to-method scatter 0.0413 combined with the
+    # disk-thickness term 0.0137. The formal per-fit errors (~0.01) are far too
+    # optimistic -- the method spread dominates, so do not tighten this.
+    # NOTE: sits ~3 sigma above the kinematics-only posterior
+    # (inc_v = 0.438 -0.061 +0.051). Suppressing the spiral arms does NOT move the
+    # photometry, so the tension is not an arm artifact. See MCMC_STATUS.md.
+    # Swap back to {type: sin_i, min: 0.0873, max: 1.4835} for the uninformative run.
+    velocity.inc_v:   {type: gaussian, mu: 0.6412, sigma: 0.0436, min: 0.0873, max: 1.4835}
+    image.R.dx:       {type: gaussian,    mu: 0.0,     sigma: 2.0, min: -10.0, max: 10.0}
+    image.R.dy:       {type: gaussian,    mu: 0.0,     sigma: 2.0, min: -10.0, max: 10.0}
+    image.C.dx:       {type: gaussian,    mu: 0.0,     sigma: 2.0, min: -10.0, max: 10.0}
+    image.C.dy:       {type: gaussian,    mu: 0.0,     sigma: 2.0, min: -10.0, max: 10.0}
+    noise.ln_f:       {type: uniform,     min: -2.0,   max: 2.0}
+
