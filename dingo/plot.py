@@ -140,3 +140,95 @@ def plot_image_fitting_result(true_image, gal_model, psf_model):
 
     plt.tight_layout()
     plt.show()
+
+#%% --------------------------------------------------------------------------
+# MCMC diagnostics
+# ----------------------------------------------------------------------------
+
+def plot_mcmc_chains(chain, names, nburn=None, filename=None, show=True):
+    '''
+    Trace plot, one panel per parameter, every walker overplotted.
+
+    Parameters
+    ----------
+    chain : (nsteps, nwalkers, ndim) array, i.e. emcee's get_chain() with no discard
+    names : list of ndim parameter names
+    nburn : if given, shade the burn-in region
+    '''
+    chain = np.asarray(chain)
+    nsteps, nwalkers, ndim = chain.shape
+    fig, axs = plt.subplots(ndim, 1, figsize=(9, 1.5*ndim), sharex=True)
+    axs = np.atleast_1d(axs)
+    for j, ax in enumerate(axs):
+        ax.plot(chain[:, :, j], color='k', alpha=0.25, lw=0.5)
+        if nburn:
+            ax.axvspan(0, nburn, color='0.85', zorder=0)
+        ax.set_ylabel(names[j].split('.')[-1], fontsize=8)
+        ax.grid(False)
+    axs[-1].set_xlabel(f'step  ({nwalkers} walkers)')
+    plt.tight_layout()
+    if filename: plt.savefig(filename, dpi=150, bbox_inches='tight')
+    if show: plt.show()
+    else: plt.close(fig)
+    return fig
+
+def plot_mcmc_corner(flat_chain, names, truths=None, filename=None, show=True):
+    '''
+    Corner plot of a flattened chain.
+
+    Uses the `corner` package when it is installed, and otherwise falls back to a
+    plain matplotlib pair grid, so that this never becomes a hard dependency.
+    '''
+    flat_chain = np.asarray(flat_chain)
+    labels = [n.split('.')[-1] for n in names]
+    try:
+        import corner
+    except ImportError:
+        return _corner_fallback(flat_chain, labels, truths, filename, show)
+    fig = corner.corner(
+        flat_chain, labels=labels, truths=truths,
+        quantiles=[0.16, 0.5, 0.84], show_titles=True, title_fmt='.3g',
+        title_kwargs={'fontsize': 8}, label_kwargs={'fontsize': 9}
+    )
+    if filename: fig.savefig(filename, dpi=150, bbox_inches='tight')
+    if show: plt.show()
+    else: plt.close(fig)
+    return fig
+
+def _corner_fallback(flat_chain, labels, truths=None, filename=None, show=True):
+    '''Minimal corner plot for when the `corner` package is unavailable.'''
+    ndim = flat_chain.shape[1]
+    fig, axs = plt.subplots(ndim, ndim, figsize=(1.35*ndim, 1.35*ndim))
+    axs = np.atleast_2d(axs)
+    for i in range(ndim):
+        for j in range(ndim):
+            ax = axs[i, j]
+            ax.grid(False)
+            if j > i:
+                ax.axis('off')
+                continue
+            if i == j:
+                ax.hist(flat_chain[:, i], bins=40, color='0.3', histtype='step')
+                lo, med, hi = np.percentile(flat_chain[:, i], [16, 50, 84])
+                ax.set_title(f'{med:.4g}\n$-${med-lo:.2g} $+${hi-med:.2g}', fontsize=6)
+                for v in (lo, med, hi):
+                    ax.axvline(v, color='0.5', ls='--', lw=0.7)
+                ax.set_yticks([])
+            else:
+                ax.hist2d(flat_chain[:, j], flat_chain[:, i], bins=40, cmap='Greys')
+            if truths is not None:
+                if i == j:
+                    ax.axvline(truths[i], color='tab:red', lw=1)
+                else:
+                    ax.axvline(truths[j], color='tab:red', lw=0.7)
+                    ax.axhline(truths[i], color='tab:red', lw=0.7)
+            if i == ndim-1: ax.set_xlabel(labels[j], fontsize=7)
+            else: ax.set_xticklabels([])
+            if j == 0 and i > 0: ax.set_ylabel(labels[i], fontsize=7)
+            elif j > 0: ax.set_yticklabels([])
+            ax.tick_params(labelsize=5)
+    plt.tight_layout()
+    if filename: fig.savefig(filename, dpi=150, bbox_inches='tight')
+    if show: plt.show()
+    else: plt.close(fig)
+    return fig

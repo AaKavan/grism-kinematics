@@ -282,6 +282,7 @@ def iteratively_find_xy(x_init, y_init, cutout, lambda_rest, x_G, y_G,
     dy = cutout[1] #+ cutout[3]//2
     x = x_init.detach()
     y = y_init.detach()
+    converged = False
     for k in range(maxiter):
         vz_new = arctangent_disk_velocity_model(x-dx, y-dy, **kwargs)
         lambda_new = lambda_rest * (1.0 + vz_new / c)
@@ -291,9 +292,28 @@ def iteratively_find_xy(x_init, y_init, cutout, lambda_rest, x_G, y_G,
            torch.max(torch.abs(y_new - y)) < tol:
             x = alpha*x + (1 - alpha)*x_new
             y = alpha*y + (1 - alpha)*y_new
+            converged = True
             break
         x = alpha*x + (1 - alpha)*x_new
         y = alpha*y + (1 - alpha)*y_new
-    if k+1>=maxiter: LOG.warning('maxiter reached but xy do not converge to 0')
+    # NOTE: testing k+1>=maxiter would also fire when the loop converged on its
+    # very last iteration, so track convergence explicitly instead.
+    #
+    # tol == 0 means the caller deliberately wants a FIXED iteration count rather
+    # than early exit -- fit_MCMC does this so the likelihood is a deterministic
+    # function of theta (an early exit at a theta-dependent k makes ln L
+    # discontinuous, which emcee cannot sample). The convergence test can never
+    # pass in that mode, so warning about it is pure noise.
+    if not converged and tol > 0:
+        n_bad = int(torch.sum((torch.abs(x_new - x) >= tol) |
+                              (torch.abs(y_new - y) >= tol)))
+        worst = float(torch.max(torch.maximum(torch.abs(x_new - x),
+                                              torch.abs(y_new - y))))
+        LOG.warning(
+            f'iteratively_find_xy: {n_bad}/{x.numel()} pixels still above '
+            f'tol={tol} after {maxiter} iterations (worst {worst:.3g} px). '
+            f'This is usually harmless: the max runs over the whole cutout, and '
+            f'pixels far outside the trace never settle while the ones carrying '
+            f'signal converge to ~1e-7.')
 
     return x, y, vz_new, k 

@@ -220,6 +220,87 @@ def load_fits_data(path_hdu):
         return np.array(hdulist[hdu].data, dtype=np.float32)
 
 #%% --------------------------------------------------------------------------
+# MCMC helpers (used by BaseFitter.fit_MCMC)
+# ----------------------------------------------------------------------------
+
+def _import_emcee():
+    '''
+    emcee is an optional dependency: the gradient-fitting path must keep working
+    without it, so it is imported lazily rather than at module scope.
+    '''
+    try:
+        import emcee
+    except ImportError as exc:
+        raise ImportError(
+            'fit_MCMC() needs the optional dependency `emcee`. Install it with '
+            '`pip install emcee` or `conda install -c conda-forge emcee`.'
+        ) from exc
+    return emcee
+
+def collect_free_scalar_params(cfgs: Dict[str, FitParamConfig]):
+    '''
+    Name-preserving companion to `_extract_tensors`, for samplers that need a flat
+    theta vector instead of optimizer parameter groups.
+
+    Keeps only *scalar* fittable tensors. Dropped, each with a log line:
+      - cfg.fit is False
+      - cfg.tensor is not a Tensor (e.g. 'image.R.forward_model' holds a callable)
+      - cfg.tensor.numel() != 1 (e.g. 'result.emline_model' is 81x81)
+    Aliased keys share one FitParamConfig, hence one tensor, so they collapse onto
+    their first occurrence -- deduplicated by id(cfg.tensor) exactly as
+    `_extract_tensors` does. Writing the shared tensor keeps every alias consistent.
+
+    Returns:
+        names:   list of full dotted keys, names[i] <-> cfgs[i]
+        cfgs:    list of the corresponding FitParamConfig objects
+        aliases: {kept_key: [dropped alias keys]}
+    '''
+    seen = {}
+    names = []
+    out = []
+    aliases = {}
+    for key, cfg in cfgs.items():
+        if not cfg.fit:
+            continue
+        if not isinstance(cfg.tensor, torch.Tensor):
+            LOG.debug(f'[MCMC] skipping non-tensor parameter {key}')
+            continue
+        if cfg.tensor.numel() != 1:
+            LOG.info(f'[MCMC] skipping array parameter {key} ({cfg.tensor.numel()} elements)')
+            continue
+        tid = id(cfg.tensor)
+        if tid in seen:
+            aliases.setdefault(seen[tid], []).append(key)
+            continue
+        seen[tid] = key
+        names.append(key)
+        out.append(cfg)
+    return names, out, aliases
+
+def estimate_background_sigma(image, source_mask=None, sigma=3.0, maxiters=10):
+    '''
+    Sigma-clipped rms of the off-source background of a 2D image.
+
+    In a DINGO grism cutout the emission line covers a small minority of pixels, so
+    iterative sigma clipping rejects the trace on its own and no explicit mask is
+    needed. Pass `source_mask` (True = exclude) when the trace fills a larger
+    fraction of the cutout.
+
+    Accepts a torch.Tensor or an ndarray; returns a float.
+    '''
+    from astropy.stats import sigma_clipped_stats
+    if isinstance(image, torch.Tensor):
+        image = image.detach().cpu().numpy()
+    image = np.asarray(image, dtype=np.float64)
+    good = np.isfinite(image)
+    if source_mask is not None:
+        if isinstance(source_mask, torch.Tensor):
+            source_mask = source_mask.detach().cpu().numpy()
+        good &= ~np.asarray(source_mask, dtype=bool)
+    _, _, std = sigma_clipped_stats(image[good], sigma=sigma, maxiters=maxiters)
+    return float(std)
+
+#%% --------------------------------------------------------------------------
 # generic base class for all fitters
 # ----------------------------------------------------------------------------
 
@@ -413,8 +494,8 @@ class BaseFitter(ABC):
             sched_main = torch.optim.lr_scheduler.StepLR(
                 self.optimizer, step_size=step_size, gamma=0.707
             )
-        else: 
-            LOG.warning(f'{sched_type} is not a currently supported scheduler!')
+        else:
+            raise ValueError(f'unknown scheduler: {sched_type}')
         # warmup scheduler and connection
         if '_warmup_size' in fs and fs['_warmup_size']>0:
             warmup_iters = fs['_warmup_size']
@@ -520,6 +601,477 @@ class BaseFitter(ABC):
     def get_losses_and_lrs(self):
         return self.losses, self.lrs
 
+    # MCMC --------------------------------------------------------------------
+    # Ensemble sampling over the same stage parameters fit_gradient() optimises.
+    # Everything below is additive: fit_gradient/fit_all are untouched, and no
+    # sampling state leaks into them.
+
+    _mcmc_loss_is_chi2 = False   # subclasses whose loss() IS a normalised chi2 set True
+
+    # fit_MCMC() overwrites these from the config. They are class defaults so that
+    # log_likelihood() can also be called on its own -- e.g. to scan or profile the
+    # objective -- without having to start a chain first.
+    mcmc_xy_iters = 40
+    mcmc_xy_tol = 5e-3
+    mcmc_ln_f_fixed = 0.0
+    mcmc_extra_param_names = ()  # nuisance dims appended to theta after the cfg params
+
+    def _mcmc_prepare(self):
+        '''Hook run once at the start of fit_MCMC, after the config-driven MCMC
+        settings are in place. Subclasses may override to set up a noise model.'''
+        pass
+
+    def _mcmc_stage_cfg(self):
+        '''
+        The same cfg merge fit_gradient does, but tolerant of groups registered
+        with fewer stages than config['fitting'] has.
+        '''
+        all_cfg = {}
+        for group, cfg_list in self.param_config_lists.items():
+            idx = self.current_stage
+            if idx >= len(cfg_list):
+                LOG.warning(
+                    f'[MCMC] group {group!r} only has {len(cfg_list)} stage(s); '
+                    f'reusing the last one for stage {idx+1}.'
+                )
+                idx = len(cfg_list) - 1
+            all_cfg.update(cfg_list[idx])
+        return all_cfg
+
+    def _mcmc_set_theta(self, theta):
+        '''
+        Write the parameter block of theta into the cfg tensors and return the
+        trailing nuisance dims as a dict.
+
+        FitParamConfig.value is read-only, so this writes through the tensor's
+        storage, as fit_gradient's own `p.data.clamp_` does. Filling in place
+        preserves tensor identity (so aliases stay aliased) and leaves
+        requires_grad alone, so fit_gradient still works afterwards.
+        '''
+        n = len(self._mcmc_cfgs)
+        with torch.no_grad():
+            for cfg, v in zip(self._mcmc_cfgs, theta[:n]):
+                cfg.tensor.data.fill_(float(v))
+        return {name: float(v) for name, v in zip(self.mcmc_extra_param_names, theta[n:])}
+
+    def _build_mcmc_priors(self):
+        '''
+        Prior spec per sampled parameter, as a list of (name, dict) in theta order.
+        Defaults to a uniform prior over the cfg's own min/max clamp; the optional
+        `mcmc.priors` YAML block overrides any of them.
+        '''
+        spec = (self.config.get('mcmc') or {}).get('priors') or {}
+        priors = []
+        for name, cfg in zip(self._mcmc_names, self._mcmc_cfgs):
+            s = dict(spec.get(name, {}))
+            s.setdefault('type', 'uniform')
+            s.setdefault('min', float(cfg.min))
+            s.setdefault('max', float(cfg.max))
+            if s['type'] == 'uniform' and max(abs(s['min']), abs(s['max'])) > 1e6:
+                LOG.warning(
+                    f'[MCMC] {name}: prior fell back to the YAML clamp '
+                    f'({s["min"]:.3g}, {s["max"]:.3g}), which is effectively unbounded. '
+                    f'Set mcmc.priors["{name}"] explicitly.'
+                )
+            priors.append((name, s))
+        for name in self.mcmc_extra_param_names:
+            priors.append((name, dict(spec.get(name, {'type': 'uniform', 'min': -3.0, 'max': 3.0}))))
+        return priors
+
+    def log_prior(self, theta):
+        '''
+        Sum of the per-parameter log priors, or -inf outside the support.
+        Constant normalisations are dropped; they cancel in the sampler.
+        '''
+        lp = 0.0
+        for (name, s), v in zip(self._mcmc_priors, theta):
+            t = s['type']
+            if t == 'uniform':
+                if not (s['min'] <= v <= s['max']):
+                    return -np.inf
+            elif t == 'log_uniform':
+                if v <= 0 or not (s['min'] <= v <= s['max']):
+                    return -np.inf
+                lp -= np.log(v)
+            elif t == 'gaussian':
+                if not (s.get('min', -np.inf) <= v <= s.get('max', np.inf)):
+                    return -np.inf
+                lp += -0.5*((v - s['mu'])/s['sigma'])**2
+            elif t == 'sin_i':
+                # isotropic-orientation prior p(i) ~ sin(i), for an inclination in radians
+                if not (s.get('min', 0.0) <= v <= s.get('max', 0.5*np.pi)):
+                    return -np.inf
+                if not (0.0 < v < 0.5*np.pi):
+                    return -np.inf
+                lp += np.log(np.sin(v))
+            else:
+                raise ValueError(f'unknown prior type for {name}: {t}')
+        return lp
+
+    def log_likelihood(self, **extras):
+        '''
+        Default log-likelihood: -0.5*loss().
+
+        Only correct when loss() is a properly normalised chi2 up to an additive
+        constant. That holds for ImagesFitter, whose loss is
+        nansum((res/err)**2), but NOT for KinematicsFitter, whose loss is an
+        unweighted, unnormalised sum of squares. Subclasses with an unnormalised
+        loss must override this.
+        '''
+        if not self._mcmc_loss_is_chi2 and not getattr(self, '_mcmc_ll_warned', False):
+            LOG.warning(
+                f'[{self.__class__.__name__}] log_likelihood() is falling back to '
+                '-0.5*loss(); verify that loss() is a normalised chi2.'
+            )
+            self._mcmc_ll_warned = True
+        with torch.no_grad():
+            return -0.5*float(self.loss())
+
+    def log_probability(self, theta):
+        '''Log posterior, up to a constant. -inf anywhere the model is invalid.'''
+        theta = np.asarray(theta, dtype=float)
+        lp = self.log_prior(theta)
+        if not np.isfinite(lp):
+            return -np.inf
+        extras = self._mcmc_set_theta(theta)
+        try:
+            ll = self.log_likelihood(**extras)
+        except Exception as exc:
+            LOG.debug(f'[MCMC] likelihood failed at {theta}: {exc}')
+            return -np.inf
+        if not np.isfinite(ll):
+            return -np.inf
+        return lp + ll
+
+    def fit_MCMC(self, nwalkers=None, nsteps=None, nburn=None,
+                 init_scatter=None, pool=None, moves=None, seed=None):
+        '''
+        Ensemble MCMC (emcee) over the free parameters of the current stage, plus
+        any nuisance dims listed in mcmc_extra_param_names.
+
+        Walkers start in a small Gaussian ball around the CURRENT parameter values,
+        so run fit_gradient()/fit_all() first: this samples the mode you already
+        found, it does not search for one.
+
+        Settings come from the optional `mcmc:` block of the config, and the
+        keyword arguments override those. Returns (flat_chain, flat_log_prob).
+        '''
+        emcee = _import_emcee()
+        mc = self.config.get('mcmc') or {}
+
+        # Which stage's free-parameter set to sample. fit_all() leaves the fitter on
+        # the LAST stage, which typically has parameters frozen for the final polish;
+        # `mcmc.stage` selects a stage whose fit flags describe what should be
+        # sampled. Stages share parameter tensors, so the fitted values carry over.
+        stage = mc.get('stage')
+        if stage is not None and int(stage) != self.current_stage:
+            self.current_stage = int(stage)
+            self._assign_cfgs_for_stage(self.current_stage)
+            LOG.info(f'[MCMC] sampling the free parameters of fitting stage {self.current_stage+1}')
+
+        self.mcmc_xy_iters = int(mc.get('xy_iters', 40))
+        self.mcmc_xy_tol = float(mc.get('xy_tol', 5e-3))
+        ln_f0 = (mc.get('noise') or {}).get('ln_f')
+        self.mcmc_ln_f_fixed = 0.0 if ln_f0 is None else float(ln_f0)
+
+        all_cfg = self._mcmc_stage_cfg()
+        self._mcmc_names, self._mcmc_cfgs, alias_map = collect_free_scalar_params(all_cfg)
+        if len(self._mcmc_names) == 0:
+            LOG.warning(
+                f'[{self.__class__.__name__}] no free scalar parameters in '
+                f'stage {self.current_stage+1}, skipping MCMC.'
+            )
+            return [], []
+        for kept, dropped in alias_map.items():
+            LOG.info(f'[MCMC] {dropped} alias(es) of {kept}, sampled once')
+
+        self._mcmc_prepare()
+
+        self.mcmc_param_names = list(self._mcmc_names) + list(self.mcmc_extra_param_names)
+        self._mcmc_priors = self._build_mcmc_priors()
+        ndim = len(self.mcmc_param_names)
+
+        nwalkers = int(nwalkers if nwalkers is not None else mc.get('nwalkers', max(32, 2*ndim+2)))
+        nsteps = int(nsteps if nsteps is not None else mc.get('nsteps', 8000))
+        nburn = int(nburn if nburn is not None else mc.get('nburn', 2000))
+        cadence = int(mc.get('log_cadence', 200))
+        if nwalkers < 2*ndim:
+            LOG.warning(f'[MCMC] nwalkers={nwalkers} < 2*ndim={2*ndim}; raising to {2*ndim}')
+            nwalkers = 2*ndim
+        if seed is None:
+            seed = mc.get('seed')
+        rng = np.random.default_rng(seed)
+
+        theta0 = np.array(
+            [float(cfg.tensor.detach().cpu()) for cfg in self._mcmc_cfgs]
+            + [self.mcmc_ln_f_fixed]*len(self.mcmc_extra_param_names)
+        )
+        scatter_cfg = dict(mc.get('init_scatter') or {})
+        scatter_cfg.update(init_scatter or {})
+        scales = np.array([
+            float(scatter_cfg.get(name, max(1e-3, 1e-3*abs(v))))
+            for name, v in zip(self.mcmc_param_names, theta0)
+        ])
+
+        # (V_rot, theta_v) and (-V_rot, theta_v + pi) give an IDENTICAL vz field,
+        # so a galaxy rotating the other way can be fitted with either sign. The
+        # config may start V_rot negative on purpose (the sample's rotation sense
+        # varies), while the prior is one-signed to kill that exact mirror mode.
+        # Map onto the positive branch rather than refusing to sample.
+        try:
+            iv = self.mcmc_param_names.index('velocity.V_rot')
+            it = self.mcmc_param_names.index('velocity.theta_v')
+        except ValueError:
+            iv = it = None
+        if iv is not None and it is not None and theta0[iv] < 0:
+            LOG.info(f'[MCMC] V_rot is negative ({theta0[iv]:.2f}); reflecting onto '
+                     f'the positive branch with theta_v -> theta_v + pi '
+                     f'(identical velocity field)')
+            theta0[iv] = -theta0[iv]
+            theta0[it] = theta0[it] + np.pi
+            with torch.no_grad():
+                self._mcmc_cfgs[iv].tensor.data.fill_(float(theta0[iv]))
+                self._mcmc_cfgs[it].tensor.data.fill_(float(theta0[it]))
+
+        # Position angle is periodic, but fit_gradient clamps it to the config's
+        # +-1e10 and so happily returns a negative value; the prior is a single
+        # period. Wrap into the prior window instead of failing on a difference
+        # that is physically meaningless.
+        for i, (name, spec) in enumerate(self._mcmc_priors):
+            if not name.endswith('theta_v'):
+                continue
+            lo, hi = float(spec.get('min', 0.0)), float(spec.get('max', 2*np.pi))
+            if abs((hi - lo) - 2*np.pi) < 1e-6 and not (lo <= theta0[i] <= hi):
+                wrapped = lo + (theta0[i] - lo) % (2*np.pi)
+                LOG.info(f'[MCMC] wrapped {name} {theta0[i]:.4f} -> {wrapped:.4f} '
+                         f'into the prior window [{lo}, {hi}]')
+                theta0[i] = wrapped
+                with torch.no_grad():
+                    self._mcmc_cfgs[i].tensor.data.fill_(float(wrapped))
+
+        # Report which parameters are outside their prior BEFORE trying to draw,
+        # so the failure names the culprit instead of saying "check mcmc.priors".
+        offenders = []
+        for (name, spec), v in zip(self._mcmc_priors, theta0):
+            lo, hi = spec.get('min', -np.inf), spec.get('max', np.inf)
+            if not (lo <= v <= hi):
+                offenders.append(f'{name}={v:.4f} outside [{lo}, {hi}]')
+        if offenders:
+            raise RuntimeError(
+                'the fitted parameters lie outside the prior support, so no walker '
+                'can be initialised:\n  ' + '\n  '.join(offenders) +
+                '\nEither the Adam fit railed (a collapsed fit: R_v -> 0 and '
+                'inc_v -> 0 together usually means no velocity signal was found, '
+                'and an informative inclination prior prevents it), or the prior '
+                'window in mcmc.priors is too narrow for this source.')
+
+        # Draw the initial ball inside the prior support: a walker starting at
+        # -inf can never move, and emcee would stall silently.
+        p0 = np.empty((nwalkers, ndim))
+        for j in range(nwalkers):
+            for _ in range(1000):
+                cand = theta0 + scales*rng.standard_normal(ndim)
+                if np.isfinite(self.log_prior(cand)):
+                    p0[j] = cand
+                    break
+            else:
+                raise RuntimeError(
+                    f'could not draw walker {j} inside the prior support after 1000 '
+                    f'tries, even though theta0 is inside it. init_scatter is '
+                    f'probably far too wide for a parameter near a bound: '
+                    f'{dict(zip(self.mcmc_param_names, scales))}')
+
+        lnp0 = np.array([self.log_probability(p) for p in p0])
+        if not np.all(np.isfinite(lnp0)):
+            bad = p0[np.argmin(lnp0)]
+            raise RuntimeError(
+                f'{int(np.sum(~np.isfinite(lnp0)))}/{nwalkers} walkers start at -inf, '
+                f'e.g. {dict(zip(self.mcmc_param_names, bad))}'
+            )
+        LOG.info(
+            f'[MCMC] ndim={ndim} nwalkers={nwalkers} nburn={nburn} nsteps={nsteps}; '
+            f'params={self.mcmc_param_names}'
+        )
+        LOG.info(f'[MCMC] lnP(theta0)={self.log_probability(theta0):.6g}')
+
+        if moves is None:
+            # the default StretchMove copes badly with the V_rot--sin(inc_v) banana
+            moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
+
+        sampler = emcee.EnsembleSampler(
+            nwalkers, ndim, self.log_probability, pool=pool, moves=moves
+        )
+
+        # Checkpointing. A production chain is hours long, and without this a
+        # reboot or a kill loses every step: emcee keeps the chain in memory and
+        # save_mcmc() only runs after the loop. Writing to a .tmp and replacing
+        # keeps the checkpoint atomic, so a crash mid-write cannot corrupt it.
+        ckpt = mc.get('checkpoint')
+        ckpt_every = int(mc.get('checkpoint_every', 500))
+        if ckpt:
+            ckpt = os.path.expanduser(str(ckpt))
+            os.makedirs(os.path.dirname(os.path.abspath(ckpt)) or '.', exist_ok=True)
+
+        def _checkpoint(sampler, ndone):
+            if not ckpt:
+                return
+            try:
+                np.savez_compressed(
+                    ckpt + '.tmp.npz',
+                    chain=sampler.get_chain(), log_prob=sampler.get_log_prob(),
+                    param_names=np.array(self.mcmc_param_names, dtype=object),
+                    nburn=nburn, nsteps_done=ndone,
+                    acceptance_fraction=sampler.acceptance_fraction,
+                    theta0=theta0)
+                os.replace(ckpt + '.tmp.npz', ckpt)
+                LOG.info(f'[MCMC] checkpoint at step {ndone} -> {ckpt}')
+            except Exception as exc:              # never let a bad write kill the chain
+                LOG.warning(f'[MCMC] checkpoint failed at step {ndone}: {exc}')
+
+        ndone = 0
+        try:
+            for i, state in enumerate(sampler.sample(p0, iterations=nburn+nsteps, progress=False)):
+                ndone = i + 1
+                if i == 0 or ndone % cadence == 0:
+                    LOG.info(
+                        f'MCMC step {ndone}/{nburn+nsteps}, '
+                        f'acc={np.mean(sampler.acceptance_fraction):.3f}, '
+                        f'max lnP={np.max(state.log_prob):.6g}'
+                    )
+                if ckpt and ndone % ckpt_every == 0:
+                    _checkpoint(sampler, ndone)
+        except KeyboardInterrupt:
+            LOG.info(f'KeyboardInterrupt, stopping MCMC at step {ndone}')
+            _checkpoint(sampler, ndone)
+
+        self.mcmc_sampler = sampler
+        self.mcmc_nburn = int(min(nburn, max(0, ndone - 1)))
+        self.mcmc_theta0 = theta0
+        self.mcmc_chain = sampler.get_chain(discard=self.mcmc_nburn, flat=True)
+        self.mcmc_log_prob = sampler.get_log_prob(discard=self.mcmc_nburn, flat=True)
+        LOG.info(
+            f'[MCMC] done: {ndone} steps, {self.mcmc_chain.shape[0]} post-burn-in samples, '
+            f'acc={np.mean(sampler.acceptance_fraction):.3f}'
+        )
+        return self.mcmc_chain, self.mcmc_log_prob
+
+    # MCMC results ------------------------------------------------------------
+
+    def get_mcmc_results(self, percentiles=(16, 50, 84)):
+        '''
+        {param_name: (lo, med, hi)} at the given percentiles.
+
+        Adds a derived 'velocity.Vsini' entry when both V_rot and inc_v were
+        sampled: that combination is what the line-of-sight velocity field
+        actually constrains, and is far tighter than either component alone.
+        '''
+        chain = self.mcmc_chain
+        out = {}
+        for j, name in enumerate(self.mcmc_param_names):
+            lo, med, hi = np.percentile(chain[:, j], percentiles)
+            out[name] = (float(lo), float(med), float(hi))
+        names = list(self.mcmc_param_names)
+        if 'velocity.V_rot' in names and 'velocity.inc_v' in names:
+            vsini = chain[:, names.index('velocity.V_rot')]*np.sin(chain[:, names.index('velocity.inc_v')])
+            lo, med, hi = np.percentile(vsini, percentiles)
+            out['velocity.Vsini'] = (float(lo), float(med), float(hi))
+        return out
+
+    def get_mcmc_diagnostics(self):
+        '''Convergence diagnostics for the last fit_MCMC run.'''
+        emcee = _import_emcee()
+        sampler = self.mcmc_sampler
+        chain = sampler.get_chain(discard=self.mcmc_nburn)       # (nsteps, nwalkers, ndim)
+        nsteps = chain.shape[0]
+        acc = sampler.acceptance_fraction
+        try:
+            tau = emcee.autocorr.integrated_time(chain, quiet=True)
+        except Exception as exc:
+            LOG.warning(f'[MCMC] autocorrelation estimate failed: {exc}')
+            tau = np.full(chain.shape[2], np.nan)
+        # NOTE: no R-hat here. emcee is an ENSEMBLE sampler -- walkers propose
+        # from one another, so they are not independent chains and Gelman-Rubin
+        # comes out optimistic by construction. tau and n_steps/tau below are the
+        # diagnostics that actually govern whether a posterior width is real.
+        half = nsteps//2
+        first, second = chain[:half], chain[half:]
+        return {
+            'n_steps': int(nsteps),
+            'n_burn': int(self.mcmc_nburn),
+            'acceptance_fraction': (float(np.mean(acc)), float(np.min(acc)), float(np.max(acc))),
+            'tau': {n: float(t) for n, t in zip(self.mcmc_param_names, tau)},
+            'n_steps_over_tau': {n: float(nsteps/t) for n, t in zip(self.mcmc_param_names, tau)},
+            'n_eff': {n: float(chain[:, :, j].size/t)
+                      for j, (n, t) in enumerate(zip(self.mcmc_param_names, tau))},
+            'split_half_shift': {
+                n: float(abs(np.mean(first[:, :, j]) - np.mean(second[:, :, j]))
+                         / (np.std(chain[:, :, j]) + 1e-30))
+                for j, n in enumerate(self.mcmc_param_names)
+            },
+            'frac_neg_inf': float(np.mean(~np.isfinite(sampler.get_log_prob(discard=self.mcmc_nburn)))),
+        }
+
+    def set_params_to_mcmc(self, mode='map'):
+        '''
+        Write a chain sample back into the cfg tensors and re-run the forward model.
+
+        mode='map'    -- the highest-log-probability sample
+        mode='median' -- the per-parameter median (may not be a sampled point)
+
+        Call this before plotting: log_likelihood() overwrites the cached model
+        images, so after fit_MCMC they hold whatever walker was evaluated last.
+        Returns the theta that was written.
+        '''
+        if mode == 'map':
+            theta = self.mcmc_chain[int(np.argmax(self.mcmc_log_prob))]
+        elif mode == 'median':
+            theta = np.median(self.mcmc_chain, axis=0)
+        else:
+            raise ValueError(f'unknown mode: {mode}')
+        extras = self._mcmc_set_theta(theta)
+        for name, value in extras.items():
+            if name == 'noise.ln_f':
+                self.mcmc_ln_f_fixed = value
+        self._reset_state()
+        with torch.no_grad():
+            self.loss()
+        return theta
+
+    def save_mcmc(self, path):
+        '''
+        Save the full chain to a .npz. param_names round-trips, so a later
+        reordering of param_config_lists can never mis-map the columns.
+
+        npz rather than emcee's HDF5Backend: h5py is not a DINGO dependency.
+        '''
+        sampler = self.mcmc_sampler
+        data = {
+            'chain': sampler.get_chain(),               # (nsteps, nwalkers, ndim)
+            'log_prob': sampler.get_log_prob(),
+            'param_names': np.array(self.mcmc_param_names, dtype=object),
+            'nburn': self.mcmc_nburn,
+            'acceptance_fraction': sampler.acceptance_fraction,
+            'theta0': self.mcmc_theta0,
+            'config_path': str(self.config_path),
+            'name': str(self.name),
+        }
+        for attr in ('sigma_R', 'sigma_C', 'mcmc_var_base', 'n_mcmc_pix'):
+            if hasattr(self, attr):
+                data[attr] = getattr(self, attr)
+        if getattr(self, 'mcmc_mask', None) is not None:
+            data['mask'] = self.mcmc_mask.detach().cpu().numpy().astype(np.uint8)
+        np.savez_compressed(path, **data)
+        LOG.info(f'[MCMC] chain saved to {path}')
+        return path
+
+    @staticmethod
+    def load_mcmc(path):
+        '''Inverse of save_mcmc. Returns a plain dict; param_names comes back as a list.'''
+        with np.load(path, allow_pickle=True) as npz:
+            out = {k: npz[k] for k in npz.files}
+        out['param_names'] = [str(n) for n in out['param_names']]
+        return out
+
 #%% --------------------------------------------------------------------------
 # Kinematics fitting subclass
 # ----------------------------------------------------------------------------
@@ -584,27 +1136,30 @@ class KinematicsFitter(BaseFitter):
                 lr=0, min=0, max=0, fit=False
             )
             cfg['image.C.forward_model'].tensor = self.fwd_models['C']
-        print(self.dispersion_C_cfg_list)
 
         self.model_cfg = {'result.emline_model': FitParamConfig(
             name='result.emline_model',
-            value = np.ones((81, 81))/np.sum(self.true_grism_R.numpy()),
+            value = np.ones((81, 81))/np.sum(self.true_grism_R.cpu().numpy()),
             lr = 0.05,
             min=0, 
             max=1e10, 
             fit=True
         )}
 
-        if len(overrides)>0: 
-            unused_keys = set([key for stage in overrides for key in stage.keys()])
+        unused_keys = set([key for stage in overrides for key in stage.keys()])
+        if len(unused_keys)>0:
             LOG.warning(f'The following override keys are not used: {unused_keys}')
 
         # register into the generic param_config_lists
+        # NOTE: every group must supply one cfg dict per fitting stage, otherwise
+        # fit_all() and _assign_cfgs_for_stage() index out of range. The emline
+        # model is stage-independent, so the same dict is repeated.
+        nstages = len(self.config['fitting'])
         self.param_config_lists = {
             'velocity':       self.velocity_cfg_list,
             'dispersion_R':   self.dispersion_R_cfg_list,
             'dispersion_C':   self.dispersion_C_cfg_list,
-            'model':          [self.model_cfg]
+            'model':          [self.model_cfg]*nstages
         }
 
         # ─────────────────────────────
@@ -615,21 +1170,29 @@ class KinematicsFitter(BaseFitter):
             torch.arange(nx), torch.arange(ny), indexing='ij'
         )
 
-        # cxR, cyR = self.fwd_models['R'](
-        #     torch.tensor(self.r_fit, device=self.device), 
-        #     torch.tensor(self.r_fit, device=self.device), 
-        #     self.lambda_rest
-        # )
-        # cxC, cyC = self.fwd_models['C'](
-        #     torch.tensor(self.r_fit, device=self.device), 
-        #     torch.tensor(self.r_fit, device=self.device), 
-        #     self.lambda_rest
-        # )
-        # self.cutout_R = (int(cxR)-self.r_fit, int(cyR)-self.r_fit, 2*self.r_fit+1, 2*self.r_fit+1)
-        # self.cutout_C = (int(cxC)-self.r_fit, int(cyC)-self.r_fit, 2*self.r_fit+1, 2*self.r_fit+1)
-        
-        self.cutout_R = tuple(img_cfg['R']['cutout'])
-        self.cutout_C = tuple(img_cfg['C']['cutout'])
+        # Explicit cutouts are preferred. For configs predating the `cutout` key,
+        # fall back to deriving them from summary.r_fit, i.e. the cutout centred on
+        # where the rest-frame line lands on the grism detector.
+        for pupil in ['R', 'C']:
+            if 'cutout' in img_cfg[pupil]:
+                cutout = tuple(img_cfg[pupil]['cutout'])
+            elif self.r_fit is not None:
+                r = self.r_fit
+                cx, cy = self.fwd_models[pupil](
+                    torch.tensor(float(r), device=self.device),
+                    torch.tensor(float(r), device=self.device),
+                    self.lambda_rest
+                )
+                cutout = (int(cx)-r, int(cy)-r, 2*r+1, 2*r+1)
+                LOG.warning(
+                    f'[{self.__class__.__name__}] image.{pupil}.cutout is missing; '
+                    f'derived {cutout} from summary.r_fit={r}. Prefer an explicit cutout.'
+                )
+            else:
+                raise KeyError(
+                    f'image.{pupil} needs a `cutout` key (or a `summary.r_fit` to derive it from)'
+                )
+            setattr(self, f'cutout_{pupil}', cutout)
 
 
     def _reset_state(self):
@@ -706,6 +1269,327 @@ class KinematicsFitter(BaseFitter):
             self.true_grism_R.detach().cpu().numpy(),
             self.true_grism_C.detach().cpu().numpy()
         )
+
+    # MCMC --------------------------------------------------------------------
+
+    mcmc_mask = None
+
+    @property
+    def mcmc_extra_param_names(self):
+        nc = (self.config.get('mcmc') or {}).get('noise') or {}
+        return ('noise.ln_f',) if nc.get('fit_ln_f', True) else ()
+
+    def _mcmc_prepare(self):
+        if self.mcmc_mask is None:
+            self.setup_noise_model()
+
+    def setup_noise_model(self, sigma_R=None, sigma_C=None,
+                          cov_threshold=0.25, extra_mask=None):
+        '''
+        Freeze the noise model, the pixel mask and the input footprint. Call once,
+        at the MAP parameters, before sampling (fit_MCMC does it automatically).
+
+        The mask is deliberately INDEPENDENT of the parameters. If it moved with
+        theta then both N and the ln(2*pi*sigma^2) term would move with theta, the
+        noise scale would stop being identifiable, and the sampler would be
+        rewarded for shrinking the mask. Making it a fixed function of the data
+        and of the MAP is legitimate; recomputing it during sampling is not.
+
+        The mask drops pixels that the bilinear remapping never reaches, measured
+        by scattering an image of ones through the same transform.
+
+        cov_threshold is 0.25, NOT ~1. `bilinear_interpolte_intensity_torch`
+        SCATTERS, so the coverage map is the Jacobian of the remapping, not an
+        occupancy fraction: it is < 1 wherever the transform stretches and > 1
+        wherever it compresses. The Doppler term stretches one grism and
+        compresses the other exactly where the velocity gradient is steepest --
+        i.e. across the galaxy centre, where cov_R ~ 0.76 while cov_C ~ 1.26. A
+        threshold near 1 therefore deletes the core: at 0.9 this cut 85% of the
+        pixels within r < 6 px, 40% of the total flux and 128 of the 200
+        brightest pixels, which is most of the kinematic signal. The genuinely
+        unreached pixels sit at exactly 0 (235 of them here), so any threshold
+        between ~0.05 and ~0.5 separates them cleanly; 0.25 keeps 100% of the
+        core and 98.4% of the flux.
+
+        Note the variance is still treated as uniform across the mask even though
+        coverage varies by ~2x over it, so pixels differ in how many input pixels
+        were averaged into them. That is an approximation the fitted ln_f absorbs
+        only in the mean.
+        '''
+        nc = (self.config.get('mcmc') or {}).get('noise') or {}
+        if sigma_R is None:
+            sigma_R = nc.get('sigma_R')
+        if sigma_C is None:
+            sigma_C = nc.get('sigma_C')
+        self.sigma_R = float(sigma_R) if sigma_R is not None \
+            else estimate_background_sigma(self.true_grism_R)
+        self.sigma_C = float(sigma_C) if sigma_C is not None \
+            else estimate_background_sigma(self.true_grism_C)
+        # corr_area inflates the variance for correlated noise. It is 100%
+        # degenerate with a fitted ln_f, so set one or the other, never both.
+        self.mcmc_corr_area = float(nc.get('corr_area', 1.0))
+        self.mcmc_var_base = (self.sigma_R**2 + self.sigma_C**2)*self.mcmc_corr_area
+
+        self._reset_state()
+        with torch.no_grad():
+            self.loss()  # populate x_R/y_R/x_C/y_C at the current (MAP) parameters
+            ones = torch.ones_like(self.true_grism_R)
+            cov_R = kinematics.bilinear_interpolte_intensity_torch(
+                self.x_R, self.y_R, ones, self.cutout_R)
+            cov_C = kinematics.bilinear_interpolte_intensity_torch(
+                self.x_C, self.y_C, ones, self.cutout_C)
+        mask = (cov_R > cov_threshold) & (cov_C > cov_threshold)
+        if extra_mask is not None:
+            mask = mask & extra_mask.to(mask.device)
+        self.mcmc_cov_R = cov_R
+        self.mcmc_cov_C = cov_C
+        self.mcmc_mask = mask
+        self.n_mcmc_pix = int(mask.sum())
+
+        # Input-space footprint: the grism pixels whose rectified position lands
+        # inside the output cutout, i.e. exactly the pixels the scatter keeps.
+        # Used only to test convergence of the fixed point where it matters.
+        self.mcmc_foot_R = self._cutout_footprint(self.x_R, self.y_R, self.cutout_R)
+        self.mcmc_foot_C = self._cutout_footprint(self.x_C, self.y_C, self.cutout_C)
+
+        # A mask is only legitimate if it removes empty pixels, not signal. Report
+        # how much flux it costs and complain when that is large -- a coverage
+        # threshold set too high silently deletes the galaxy core, which is where
+        # nearly all the kinematic information lives, and nothing else downstream
+        # would reveal it.
+        with torch.no_grad():
+            flux = torch.abs(self.image_R)
+            frac_out = float(flux[~mask].sum()/flux.sum()) if float(flux.sum()) > 0 else 0.0
+        self.mcmc_flux_masked_out = frac_out
+        LOG.info(
+            f'[MCMC] noise model frozen: sigma_R={self.sigma_R:.5g} sigma_C={self.sigma_C:.5g} '
+            f'var_base={self.mcmc_var_base:.5g} N_pix={self.n_mcmc_pix}/{mask.numel()} '
+            f'(mask drops {100*frac_out:.1f}% of the flux)'
+        )
+        if frac_out > 0.10:
+            LOG.warning(
+                f'[MCMC] the mask removes {100*frac_out:.1f}% of the flux at '
+                f'cov_threshold={cov_threshold}. The coverage map is a Jacobian, so a '
+                f'threshold near 1 cuts the stretched galaxy centre rather than the '
+                f'uncovered edges. Lower cov_threshold (0.25 is the default).')
+        return self.mcmc_mask
+
+    @staticmethod
+    def _cutout_footprint(x, y, cutout):
+        x0, y0, w, h = cutout
+        return ((x - x0 >= 0) & (x - x0 < w - 1) &
+                (y - y0 >= 0) & (y - y0 < h - 1))
+
+    def _xy_converged(self, x, y, cutout, foot, velocity, disp):
+        '''
+        Test convergence of the fixed point by taking one more undamped step.
+
+        The `k` returned by iteratively_find_xy cannot be used for this: its
+        max-over-all-pixels test is dominated by pixels outside the useful
+        footprint that never settle, so it reports non-convergence even when the
+        loss has converged to ~1e-7 relative. Restricting the test to the frozen
+        footprint is what makes it meaningful.
+        '''
+        c = 299792.458  # km/s
+        vz = kinematics.arctangent_disk_velocity_model(x - cutout[0], y - cutout[1], **velocity)
+        lambda_obs = self.lambda_rest*(1.0 + vz/c)
+        x_new, y_new = kinematics.forward_dispersion_model(self.x_G, self.y_G, lambda_obs, **disp)
+        if not (torch.isfinite(x_new).all() and torch.isfinite(y_new).all()):
+            return False
+        return bool(torch.max(torch.abs(x_new - x)[foot]) < self.mcmc_xy_tol and
+                    torch.max(torch.abs(y_new - y)[foot]) < self.mcmc_xy_tol)
+
+    def log_likelihood(self, **extras):
+        '''
+        Full Gaussian log-likelihood of the R-vs-C residual on the frozen mask,
+        including the ln(2*pi*sigma^2) term -- that term is what makes the noise
+        scale ln_f identifiable, so it must not be dropped.
+
+        The residual compares two noisy rectified images rather than model vs
+        data, so its variance is sigma_R^2 + sigma_C^2, scaled by exp(2*ln_f).
+
+        Unlike loss(), this is cold-started and runs a FIXED number of fixed-point
+        iterations. loss() warm-starts x_R/y_R from the previous call, which makes
+        it a function of the evaluation history; emcee interleaves walkers in an
+        arbitrary order, so a history-dependent likelihood is not a likelihood at
+        all. Stopping on a tolerance would likewise make lnL discontinuous in
+        theta, because the iteration count would jump around.
+        '''
+        if self.mcmc_mask is None:
+            raise RuntimeError('call setup_noise_model() before log_likelihood()')
+
+        ln_f = float(extras.get('noise.ln_f', self.mcmc_ln_f_fixed))
+        velocity = self._get_model_params('velocity')
+        disp_R = self._get_model_params('dispersion_R')
+        disp_C = self._get_model_params('dispersion_C')
+        niter = self.mcmc_xy_iters
+
+        with torch.no_grad():
+            x_R, y_R, vz_R, _ = kinematics.iteratively_find_xy(
+                self.x_G.clone(), self.y_G.clone(), self.cutout_R,
+                self.lambda_rest, self.x_G, self.y_G,
+                maxiter=niter, tol=0.0, **velocity, **disp_R
+            )
+            x_C, y_C, vz_C, _ = kinematics.iteratively_find_xy(
+                self.x_G.clone(), self.y_G.clone(), self.cutout_C,
+                self.lambda_rest, self.x_G, self.y_G,
+                maxiter=niter, tol=0.0, **velocity, **disp_C
+            )
+
+            if not self._xy_converged(x_R, y_R, self.cutout_R, self.mcmc_foot_R, velocity, disp_R):
+                return -np.inf
+            if not self._xy_converged(x_C, y_C, self.cutout_C, self.mcmc_foot_C, velocity, disp_C):
+                return -np.inf
+
+            image_R = kinematics.bilinear_interpolte_intensity_torch(
+                x_R, y_R, self.true_grism_R, self.cutout_R)
+            image_C = kinematics.bilinear_interpolte_intensity_torch(
+                x_C, y_C, self.true_grism_C, self.cutout_C)
+            if not (torch.isfinite(image_R).all() and torch.isfinite(image_C).all()):
+                return -np.inf
+            sse = float(torch.sum(((image_R - image_C)[self.mcmc_mask])**2))
+
+        # cache the model images so get_fitting_results() keeps working; note these
+        # then describe the LAST evaluated sample, not the MAP
+        self.x_R, self.y_R, self.vz_R = x_R, y_R, vz_R
+        self.x_C, self.y_C, self.vz_C = x_C, y_C, vz_C
+        self.image_R, self.image_C = image_R, image_C
+
+        var = np.exp(2.0*ln_f)*self.mcmc_var_base
+        return -0.5*sse/var - 0.5*self.n_mcmc_pix*np.log(2.0*np.pi*var)
+
+    # mock data ---------------------------------------------------------------
+
+    def set_params_dict(self, params):
+        '''Write {full_dotted_key: value} into the current stage's cfg tensors.'''
+        all_cfg = self._mcmc_stage_cfg()
+        with torch.no_grad():
+            for key, value in params.items():
+                if key not in all_cfg:
+                    raise KeyError(f'{key} is not a parameter of stage {self.current_stage+1}')
+                all_cfg[key].tensor.data.fill_(float(value))
+
+    def make_mock_data(self, intensity=None, theta=None, sigma_R=None, sigma_C=None,
+                       sigma_v=0.0, n_vnodes=7, seed=None, inplace=True):
+        '''
+        Synthesise a mock R/C grism pair from a known source-plane intensity map
+        and a known set of kinematic parameters.
+
+        The fitter is a consistency comparison, not a generative model: it
+        rectifies both grisms back to a shared source frame and differences them,
+        so there is no model image to evaluate at theta_true. A mock therefore has
+        to invert the relation the fit solves. At the fixed point of
+        iteratively_find_xy, a source-plane position s maps to the grism pixel
+
+            x_G = s_x + cutout[0] - dx_p - mdx,   mdx, mdy = forward_model(0, 0, lam)
+            y_G = s_y + cutout[1] - dy_p - mdy,   lam = lambda_rest*(1 + vz(s)/c)
+
+        Taking (mdx, mdy) from the very same forward_model closure the fit uses
+        guarantees the inverse is exact. Note that kinematics.dispersion_model
+        applies its dx/dy with the OPPOSITE sign convention to
+        forward_dispersion_model, so it must not be used here: doing so recovers
+        dx = -dx_true and looks like a broken sampler.
+
+        Parameters
+        ----------
+        intensity : (h, w) source-plane line intensity. Defaults to the currently
+                    rectified image_R, which has a realistic morphology and flux
+                    scale. Its own noise enters both mocks identically and so
+                    cancels in the R-C difference; only the noise added here is
+                    independent.
+        theta     : optional {full_dotted_key: value} written before synthesising,
+                    and left in place afterwards.
+        sigma_R, sigma_C : Gaussian noise added to each mock. Defaults to the
+                    frozen noise model if set up, else a background estimate.
+                    Pass 0 for a noiseless mock (measures the resampling floor).
+        sigma_v   : intrinsic line-of-sight velocity dispersion in km/s. Each
+                    source pixel then emits over a range of wavelengths rather
+                    than a single one, which smears the trace along the dispersion
+                    direction -- i.e. beam smearing. The velocity model has no
+                    dispersion term, so fitting such a mock measures how much an
+                    unmodelled dispersion biases the recovered parameters.
+                    Implemented as an n_vnodes-point Gauss-weighted quadrature
+                    over +-3 sigma_v.
+        inplace   : replace self.true_grism_R/_C, keeping the originals for
+                    restore_true_data().
+
+        Returns (mock_R, mock_C) as tensors on the fitter's device.
+        '''
+        c = 299792.458  # km/s
+        if theta is not None:
+            self.set_params_dict(theta)
+
+        if intensity is None:
+            self._reset_state()
+            with torch.no_grad():
+                self.loss()
+            intensity = self.image_R.detach().clone()
+        intensity = torch.as_tensor(intensity, dtype=torch.float32)
+
+        if sigma_R is None:
+            sigma_R = getattr(self, 'sigma_R', None)
+            if sigma_R is None:
+                sigma_R = estimate_background_sigma(self.true_grism_R)
+        if sigma_C is None:
+            sigma_C = getattr(self, 'sigma_C', None)
+            if sigma_C is None:
+                sigma_C = estimate_background_sigma(self.true_grism_C)
+
+        velocity = self._get_model_params('velocity')
+        grism_shape = self.true_grism_R.shape
+        gen = torch.Generator().manual_seed(seed) if seed is not None else None
+
+        if sigma_v and sigma_v > 0:
+            nodes = np.linspace(-3.0, 3.0, int(n_vnodes))
+            weights = np.exp(-0.5*nodes**2)
+            weights /= weights.sum()
+            nodes = nodes*float(sigma_v)
+        else:
+            nodes, weights = np.array([0.0]), np.array([1.0])
+
+        mocks = {}
+        for pupil, cutout, sigma in [('R', self.cutout_R, sigma_R),
+                                     ('C', self.cutout_C, sigma_C)]:
+            disp = self._get_model_params(f'dispersion_{pupil}')
+            h, w = cutout[3], cutout[2]
+            with torch.no_grad():
+                s_y, s_x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
+                s_x = s_x.to(torch.float32)
+                s_y = s_y.to(torch.float32)
+                vz = kinematics.arctangent_disk_velocity_model(s_x, s_y, **velocity)
+                zeros = torch.zeros_like(s_x)
+                mock = torch.zeros(grism_shape, dtype=torch.float32)
+                for dv, wt in zip(nodes, weights):
+                    lambda_obs = self.lambda_rest*(1.0 + (vz + float(dv))/c)
+                    mdx, mdy = disp['forward_model'](zeros, zeros, lambda_obs)
+                    x_G = s_x + cutout[0] - disp['dx'] - mdx
+                    y_G = s_y + cutout[1] - disp['dy'] - mdy
+                    mock = mock + kinematics.bilinear_interpolte_intensity_torch(
+                        x_G, y_G, intensity*float(wt), (0, 0, grism_shape[1], grism_shape[0])
+                    )
+                if sigma:
+                    mock = mock + float(sigma)*torch.randn(
+                        mock.shape, generator=gen, device=mock.device)
+            mocks[pupil] = mock
+
+        if inplace:
+            if not hasattr(self, '_true_grism_backup'):
+                self._true_grism_backup = (self.true_grism_R, self.true_grism_C)
+            self.true_grism_R = mocks['R']
+            self.true_grism_C = mocks['C']
+            LOG.info(
+                f'[mock] injected mock R/C (sigma_R={float(sigma_R):.4g}, '
+                f'sigma_C={float(sigma_C):.4g}); call restore_true_data() to undo'
+            )
+        return mocks['R'], mocks['C']
+
+    def restore_true_data(self):
+        '''Undo an in-place make_mock_data().'''
+        if not hasattr(self, '_true_grism_backup'):
+            return False
+        self.true_grism_R, self.true_grism_C = self._true_grism_backup
+        del self._true_grism_backup
+        return True
 
 #%% --------------------------------------------------------------------------
 # Image fitting subclass
