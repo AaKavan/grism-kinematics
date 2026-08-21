@@ -29,14 +29,19 @@ image:
     dx: 0
     dy: 0
 
+# Starting values taken verbatim from Archive_6/1-fit-kinematics.ipynb, which is
+# the fit this galaxy's published result comes from. Measured: this start reaches
+# loss() = 0.097895; the sign-hint start (V_rot=-300, R_v=2, inc_v=1.2) converges
+# to a worse local minimum at 0.099337, and (+300, 2, 1.2) collapses to face-on at
+# 0.3097. The loss surface is multimodal -- do not "tidy" these.
 velocity:
   model: arctan
-  V_rot: -300.0
-  R_v: 2
+  V_rot: 500.0
+  R_v: 3
   x0_v: 40.0
-  y0_v: 40.0
+  y0_v: 40
   theta_v: 0
-  inc_v: 1.2
+  inc_v: 1.0
 
 # ----------------------------------------------------------------------------
 # Fitting strategy (also defines the free-parameter set that fit_MCMC samples)

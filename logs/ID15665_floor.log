@@ -1,0 +1,27 @@
+17:05:19 - WARNING - dingo.fitting - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+17:05:19 - WARNING - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+17:05:48 - INFO - N_pix=5412  var_base=2.89506e-05  N*var_base=0.156681
+17:05:48 - INFO - [dx=dy=0] SSE_floor=0.00228981  ratio to N*var_base = 0.0146  <-- OK (<0.1)
+17:06:11 - INFO - [dx=dy=0] noiseless-mock refit bias (fitted - true):
+17:06:11 - INFO -     velocity.V_rot       true=  506.3810  fitted=  525.4260  bias=+19.0450
+17:06:11 - INFO -     velocity.R_v         true=    3.3139  fitted=    3.6157  bias=+0.3017
+17:06:11 - INFO -     velocity.x0_v        true=   42.4160  fitted=   43.2884  bias=+0.8723
+17:06:11 - INFO -     velocity.y0_v        true=   41.3248  fitted=   42.0189  bias=+0.6941
+17:06:11 - INFO -     velocity.theta_v     true=    2.3275  fitted=    2.2986  bias=-0.0289
+17:06:11 - INFO -     velocity.inc_v       true=    0.5043  fitted=    0.4946  bias=-0.0097
+17:06:11 - INFO -     image.R.dx           true=    0.0000  fitted=    0.5767  bias=+0.5767
+17:06:11 - INFO -     image.R.dy           true=    0.0000  fitted=    0.4531  bias=+0.4531
+17:06:11 - INFO -     image.C.dx           true=    0.0000  fitted=    0.6318  bias=+0.6318
+17:06:11 - INFO -     image.C.dy           true=    0.0000  fitted=    0.4738  bias=+0.4738
+17:06:11 - INFO - [dx,dy at MAP] SSE_floor=0.00325732  ratio to N*var_base = 0.0208  <-- OK (<0.1)
+17:06:33 - INFO - [dx,dy at MAP] noiseless-mock refit bias (fitted - true):
+17:06:33 - INFO -     velocity.V_rot       true=  506.3810  fitted=  526.8936  bias=+20.5126
+17:06:33 - INFO -     velocity.R_v         true=    3.3139  fitted=    3.7660  bias=+0.4521
+17:06:33 - INFO -     velocity.x0_v        true=   42.4160  fitted=   42.7977  bias=+0.3816
+17:06:33 - INFO -     velocity.y0_v        true=   41.3248  fitted=   41.7196  bias=+0.3948
+17:06:33 - INFO -     velocity.theta_v     true=    2.3275  fitted=    2.3101  bias=-0.0174
+17:06:33 - INFO -     velocity.inc_v       true=    0.5043  fitted=    0.4913  bias=-0.0130
+17:06:33 - INFO -     image.R.dx           true=    0.6417  fitted=    0.4518  bias=-0.1899
+17:06:33 - INFO -     image.R.dy           true=    0.4044  fitted=    0.2218  bias=-0.1826
+17:06:33 - INFO -     image.C.dx           true=   -0.2724  fitted=   -0.3605  bias=-0.0882
+17:06:33 - INFO -     image.C.dy           true=   -0.3908  fitted=   -0.7326  bias=-0.3418

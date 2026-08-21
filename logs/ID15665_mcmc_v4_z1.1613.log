@@ -1,0 +1,318 @@
+13:39:43 - WARNING - dingo.fitting - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+13:39:43 - WARNING - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+13:39:43 - INFO - dingo.fitting - [KinematicsFitter] using coordinate unit = pix
+13:39:43 - INFO - [KinematicsFitter] using coordinate unit = pix
+13:39:43 - WARNING - dingo.fitting - [KinematicsFitter] image.R.cutout is missing; derived (-123, 24, 81, 81) from summary.r_fit=40. Prefer an explicit cutout.
+13:39:43 - WARNING - [KinematicsFitter] image.R.cutout is missing; derived (-123, 24, 81, 81) from summary.r_fit=40. Prefer an explicit cutout.
+13:39:43 - WARNING - dingo.fitting - [KinematicsFitter] image.C.cutout is missing; derived (43, -74, 81, 81) from summary.r_fit=40. Prefer an explicit cutout.
+13:39:43 - WARNING - [KinematicsFitter] image.C.cutout is missing; derived (43, -74, 81, 81) from summary.r_fit=40. Prefer an explicit cutout.
+13:39:43 - INFO - cutouts: R=(-123, 24, 81, 81) C=(43, -74, 81, 81)
+13:39:43 - INFO - dingo.fitting - Starting fitting stage 1/2: method=Adam
+13:39:43 - INFO - Starting fitting stage 1/2: method=Adam
+13:39:43 - INFO - dingo.fitting - Stage 1, Step 1, loss=0.79775, lr=0.05000xy_iters=(18, 28)
+13:39:43 - INFO - Stage 1, Step 1, loss=0.79775, lr=0.05000xy_iters=(18, 28)
+13:39:45 - INFO - dingo.fitting - Stage 1, Step 100, loss=0.10875, lr=0.05000xy_iters=(11, 8)
+13:39:45 - INFO - Stage 1, Step 100, loss=0.10875, lr=0.05000xy_iters=(11, 8)
+13:39:46 - INFO - dingo.fitting - Stage 1, Step 200, loss=0.099611, lr=0.05000xy_iters=(5, 6)
+13:39:46 - INFO - Stage 1, Step 200, loss=0.099611, lr=0.05000xy_iters=(5, 6)
+13:39:47 - INFO - dingo.fitting - Stage 1, Step 300, loss=0.099629, lr=0.05000xy_iters=(8, 6)
+13:39:47 - INFO - Stage 1, Step 300, loss=0.099629, lr=0.05000xy_iters=(8, 6)
+13:39:48 - INFO - dingo.fitting - Stage 1, Step 400, loss=0.097933, lr=0.05000xy_iters=(7, 6)
+13:39:48 - INFO - Stage 1, Step 400, loss=0.097933, lr=0.05000xy_iters=(7, 6)
+13:39:49 - INFO - dingo.fitting - Stage 1, Step 500, loss=0.097892, lr=0.05000xy_iters=(1, 2)
+13:39:49 - INFO - Stage 1, Step 500, loss=0.097892, lr=0.05000xy_iters=(1, 2)
+13:39:50 - INFO - dingo.fitting - Stage 1, Step 600, loss=0.097896, lr=0.05000xy_iters=(9, 5)
+13:39:50 - INFO - Stage 1, Step 600, loss=0.097896, lr=0.05000xy_iters=(9, 5)
+13:39:51 - INFO - dingo.fitting - Stage 1, Step 700, loss=0.097949, lr=0.05000xy_iters=(8, 5)
+13:39:51 - INFO - Stage 1, Step 700, loss=0.097949, lr=0.05000xy_iters=(8, 5)
+13:39:52 - INFO - dingo.fitting - Stage 1, Step 800, loss=0.09866, lr=0.05000xy_iters=(13, 6)
+13:39:52 - INFO - Stage 1, Step 800, loss=0.09866, lr=0.05000xy_iters=(13, 6)
+13:39:53 - INFO - dingo.fitting - Stage 1, Step 900, loss=0.098178, lr=0.05000xy_iters=(12, 7)
+13:39:53 - INFO - Stage 1, Step 900, loss=0.098178, lr=0.05000xy_iters=(12, 7)
+13:39:55 - INFO - dingo.fitting - Stage 1, Step 1000, loss=0.099086, lr=0.05000xy_iters=(15, 8)
+13:39:55 - INFO - Stage 1, Step 1000, loss=0.099086, lr=0.05000xy_iters=(15, 8)
+13:39:56 - INFO - dingo.fitting - Stage 1, Step 1100, loss=0.097877, lr=0.03535xy_iters=(4, 3)
+13:39:56 - INFO - Stage 1, Step 1100, loss=0.097877, lr=0.03535xy_iters=(4, 3)
+13:39:56 - INFO - dingo.fitting - Stage 1, Step 1200, loss=0.097879, lr=0.03535xy_iters=(8, 4)
+13:39:56 - INFO - Stage 1, Step 1200, loss=0.097879, lr=0.03535xy_iters=(8, 4)
+13:39:57 - INFO - dingo.fitting - Stage 1, Step 1300, loss=0.097894, lr=0.03535xy_iters=(9, 5)
+13:39:57 - INFO - Stage 1, Step 1300, loss=0.097894, lr=0.03535xy_iters=(9, 5)
+13:39:58 - INFO - dingo.fitting - Stage 1, Step 1400, loss=0.097882, lr=0.03535xy_iters=(9, 4)
+13:39:58 - INFO - Stage 1, Step 1400, loss=0.097882, lr=0.03535xy_iters=(9, 4)
+13:39:59 - INFO - dingo.fitting - Stage 1, Step 1500, loss=0.097901, lr=0.03535xy_iters=(10, 3)
+13:39:59 - INFO - Stage 1, Step 1500, loss=0.097901, lr=0.03535xy_iters=(10, 3)
+13:40:00 - INFO - dingo.fitting - Stage 1, Step 1600, loss=0.098059, lr=0.03535xy_iters=(12, 4)
+13:40:00 - INFO - Stage 1, Step 1600, loss=0.098059, lr=0.03535xy_iters=(12, 4)
+13:40:01 - INFO - dingo.fitting - Stage 1, Step 1700, loss=0.098118, lr=0.03535xy_iters=(12, 4)
+13:40:01 - INFO - Stage 1, Step 1700, loss=0.098118, lr=0.03535xy_iters=(12, 4)
+13:40:02 - INFO - dingo.fitting - Stage 1, Step 1800, loss=0.097904, lr=0.03535xy_iters=(10, 6)
+13:40:02 - INFO - Stage 1, Step 1800, loss=0.097904, lr=0.03535xy_iters=(10, 6)
+13:40:03 - INFO - dingo.fitting - Stage 1, Step 1900, loss=0.098134, lr=0.03535xy_iters=(12, 9)
+13:40:03 - INFO - Stage 1, Step 1900, loss=0.098134, lr=0.03535xy_iters=(12, 9)
+13:40:04 - INFO - dingo.fitting - Stage 1, Step 2000, loss=0.098035, lr=0.03535xy_iters=(7, 6)
+13:40:04 - INFO - Stage 1, Step 2000, loss=0.098035, lr=0.03535xy_iters=(7, 6)
+13:40:05 - INFO - dingo.fitting - Stage 1, Step 2100, loss=0.097877, lr=0.02499xy_iters=(5, 2)
+13:40:05 - INFO - Stage 1, Step 2100, loss=0.097877, lr=0.02499xy_iters=(5, 2)
+13:40:06 - INFO - dingo.fitting - Stage 1, Step 2200, loss=0.097872, lr=0.02499xy_iters=(2, 2)
+13:40:06 - INFO - Stage 1, Step 2200, loss=0.097872, lr=0.02499xy_iters=(2, 2)
+13:40:07 - INFO - dingo.fitting - Stage 1, Step 2300, loss=0.097866, lr=0.02499xy_iters=(6, 4)
+13:40:07 - INFO - Stage 1, Step 2300, loss=0.097866, lr=0.02499xy_iters=(6, 4)
+13:40:08 - INFO - dingo.fitting - Stage 1, Step 2400, loss=0.097911, lr=0.02499xy_iters=(13, 6)
+13:40:08 - INFO - Stage 1, Step 2400, loss=0.097911, lr=0.02499xy_iters=(13, 6)
+13:40:08 - INFO - dingo.fitting - Stage 1, Step 2500, loss=0.097876, lr=0.02499xy_iters=(6, 5)
+13:40:08 - INFO - Stage 1, Step 2500, loss=0.097876, lr=0.02499xy_iters=(6, 5)
+13:40:08 - INFO - dingo.fitting - Starting fitting stage 2/2: method=Adam
+13:40:08 - INFO - Starting fitting stage 2/2: method=Adam
+13:40:08 - INFO - dingo.fitting - Stage 2, Step 1, loss=0.097872, lr=0.00300xy_iters=(30, 17)
+13:40:08 - INFO - Stage 2, Step 1, loss=0.097872, lr=0.00300xy_iters=(30, 17)
+13:40:09 - INFO - dingo.fitting - Stage 2, Step 100, loss=0.097869, lr=0.00300xy_iters=(1, 0)
+13:40:09 - INFO - Stage 2, Step 100, loss=0.097869, lr=0.00300xy_iters=(1, 0)
+13:40:09 - INFO - dingo.fitting - Stage 2, Step 200, loss=0.097876, lr=0.00212xy_iters=(4, 1)
+13:40:09 - INFO - Stage 2, Step 200, loss=0.097876, lr=0.00212xy_iters=(4, 1)
+13:40:10 - INFO - dingo.fitting - Stage 2, Step 300, loss=0.097875, lr=0.00150xy_iters=(0, 0)
+13:40:10 - INFO - Stage 2, Step 300, loss=0.097875, lr=0.00150xy_iters=(0, 0)
+13:40:10 - INFO - dingo.fitting - Stage 2, Step 400, loss=0.097875, lr=0.00106xy_iters=(1, 1)
+13:40:10 - INFO - Stage 2, Step 400, loss=0.097875, lr=0.00106xy_iters=(1, 1)
+13:40:11 - INFO - dingo.fitting - Stage 2, Step 500, loss=0.097879, lr=0.00075xy_iters=(1, 1)
+13:40:11 - INFO - Stage 2, Step 500, loss=0.097879, lr=0.00075xy_iters=(1, 1)
+13:40:11 - INFO - dingo.fitting - Stage 2, Step 600, loss=0.097884, lr=0.00053xy_iters=(0, 1)
+13:40:11 - INFO - Stage 2, Step 600, loss=0.097884, lr=0.00053xy_iters=(0, 1)
+13:40:11 - INFO - dingo.fitting - Stage 2, Step 700, loss=0.097887, lr=0.00037xy_iters=(0, 0)
+13:40:11 - INFO - Stage 2, Step 700, loss=0.097887, lr=0.00037xy_iters=(0, 0)
+13:40:12 - INFO - dingo.fitting - Stage 2, Step 800, loss=0.097883, lr=0.00026xy_iters=(0, 1)
+13:40:12 - INFO - Stage 2, Step 800, loss=0.097883, lr=0.00026xy_iters=(0, 1)
+13:40:12 - INFO - dingo.fitting - Stage 2, Step 900, loss=0.09789, lr=0.00019xy_iters=(0, 0)
+13:40:12 - INFO - Stage 2, Step 900, loss=0.09789, lr=0.00019xy_iters=(0, 0)
+13:40:12 - INFO - dingo.fitting - Stage 2, Step 1000, loss=0.097896, lr=0.00013xy_iters=(0, 0)
+13:40:12 - INFO - Stage 2, Step 1000, loss=0.097896, lr=0.00013xy_iters=(0, 0)
+13:40:12 - INFO - dingo.fitting - Stage 2, Step 1100, loss=0.097894, lr=0.00009xy_iters=(0, 0)
+13:40:12 - INFO - Stage 2, Step 1100, loss=0.097894, lr=0.00009xy_iters=(0, 0)
+13:40:13 - INFO - dingo.fitting - Stage 2, Step 1200, loss=0.097892, lr=0.00007xy_iters=(0, 0)
+13:40:13 - INFO - Stage 2, Step 1200, loss=0.097892, lr=0.00007xy_iters=(0, 0)
+13:40:13 - INFO - dingo.fitting - Stage 2, Step 1300, loss=0.09789, lr=0.00005xy_iters=(0, 0)
+13:40:13 - INFO - Stage 2, Step 1300, loss=0.09789, lr=0.00005xy_iters=(0, 0)
+13:40:13 - INFO - dingo.fitting - Stage 2, Step 1400, loss=0.09789, lr=0.00003xy_iters=(0, 0)
+13:40:13 - INFO - Stage 2, Step 1400, loss=0.09789, lr=0.00003xy_iters=(0, 0)
+13:40:14 - INFO - dingo.fitting - Stage 2, Step 1500, loss=0.097889, lr=0.00002xy_iters=(0, 0)
+13:40:14 - INFO - Stage 2, Step 1500, loss=0.097889, lr=0.00002xy_iters=(0, 0)
+13:40:14 - INFO - --- Adam MAP ---
+13:40:14 - INFO -   V_rot      = 506.0279
+13:40:14 - INFO -   R_v        = 3.3101
+13:40:14 - INFO -   x0_v       = 42.4197
+13:40:14 - INFO -   y0_v       = 41.3395
+13:40:14 - INFO -   theta_v    = 2.3303
+13:40:14 - INFO -   inc_v      = 0.4948
+13:40:14 - INFO -   R  dx,dy  = 0.9333, 0.2318
+13:40:14 - INFO -   C  dx,dy  = -0.1528, 0.9722
+13:40:14 - INFO - dingo.fitting - [MCMC] sampling the free parameters of fitting stage 1
+13:40:14 - INFO - [MCMC] sampling the free parameters of fitting stage 1
+13:40:14 - INFO - dingo.fitting - [MCMC] skipping array parameter result.emline_model (6561 elements)
+13:40:14 - INFO - [MCMC] skipping array parameter result.emline_model (6561 elements)
+13:40:14 - INFO - dingo.fitting - [MCMC] noise model frozen: sigma_R=0.0037841 sigma_C=0.0038251 var_base=2.8951e-05 N_pix=6298/6561 (mask drops 1.6% of the flux)
+13:40:14 - INFO - [MCMC] noise model frozen: sigma_R=0.0037841 sigma_C=0.0038251 var_base=2.8951e-05 N_pix=6298/6561 (mask drops 1.6% of the flux)
+13:40:14 - INFO - dingo.fitting - [MCMC] ndim=11 nwalkers=32 nburn=2000 nsteps=8000; params=['velocity.V_rot', 'velocity.R_v', 'velocity.x0_v', 'velocity.y0_v', 'velocity.theta_v', 'velocity.inc_v', 'image.R.dx', 'image.R.dy', 'image.C.dx', 'image.C.dy', 'noise.ln_f']
+13:40:14 - INFO - [MCMC] ndim=11 nwalkers=32 nburn=2000 nsteps=8000; params=['velocity.V_rot', 'velocity.R_v', 'velocity.x0_v', 'velocity.y0_v', 'velocity.theta_v', 'velocity.inc_v', 'image.R.dx', 'image.R.dy', 'image.C.dx', 'image.C.dy', 'noise.ln_f']
+13:40:15 - INFO - dingo.fitting - [MCMC] lnP(theta0)=25437.7
+13:40:15 - INFO - [MCMC] lnP(theta0)=25437.7
+13:40:16 - INFO - dingo.fitting - MCMC step 1/10000, acc=0.469, max lnP=25776.9
+13:40:16 - INFO - MCMC step 1/10000, acc=0.469, max lnP=25776.9
+13:43:00 - INFO - dingo.fitting - MCMC step 200/10000, acc=0.120, max lnP=25951.4
+13:43:00 - INFO - MCMC step 200/10000, acc=0.120, max lnP=25951.4
+13:45:34 - INFO - dingo.fitting - MCMC step 400/10000, acc=0.111, max lnP=25950.5
+13:45:34 - INFO - MCMC step 400/10000, acc=0.111, max lnP=25950.5
+13:46:51 - INFO - dingo.fitting - [MCMC] checkpoint at step 500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+13:46:51 - INFO - [MCMC] checkpoint at step 500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+13:48:07 - INFO - dingo.fitting - MCMC step 600/10000, acc=0.112, max lnP=25952.4
+13:48:07 - INFO - MCMC step 600/10000, acc=0.112, max lnP=25952.4
+13:50:33 - INFO - dingo.fitting - MCMC step 800/10000, acc=0.113, max lnP=25952.9
+13:50:33 - INFO - MCMC step 800/10000, acc=0.113, max lnP=25952.9
+13:52:58 - INFO - dingo.fitting - MCMC step 1000/10000, acc=0.113, max lnP=25951.5
+13:52:58 - INFO - MCMC step 1000/10000, acc=0.113, max lnP=25951.5
+13:52:58 - INFO - dingo.fitting - [MCMC] checkpoint at step 1000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+13:52:58 - INFO - [MCMC] checkpoint at step 1000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:12:50 - INFO - dingo.fitting - MCMC step 1200/10000, acc=0.115, max lnP=25952.8
+14:12:50 - INFO - MCMC step 1200/10000, acc=0.115, max lnP=25952.8
+14:15:18 - INFO - dingo.fitting - MCMC step 1400/10000, acc=0.117, max lnP=25952.2
+14:15:18 - INFO - MCMC step 1400/10000, acc=0.117, max lnP=25952.2
+14:16:35 - INFO - dingo.fitting - [MCMC] checkpoint at step 1500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:16:35 - INFO - [MCMC] checkpoint at step 1500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:17:48 - INFO - dingo.fitting - MCMC step 1600/10000, acc=0.118, max lnP=25953.3
+14:17:48 - INFO - MCMC step 1600/10000, acc=0.118, max lnP=25953.3
+14:23:55 - INFO - dingo.fitting - MCMC step 1800/10000, acc=0.122, max lnP=25952
+14:23:55 - INFO - MCMC step 1800/10000, acc=0.122, max lnP=25952
+14:26:22 - INFO - dingo.fitting - MCMC step 2000/10000, acc=0.124, max lnP=25952.7
+14:26:22 - INFO - MCMC step 2000/10000, acc=0.124, max lnP=25952.7
+14:26:22 - INFO - dingo.fitting - [MCMC] checkpoint at step 2000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:26:22 - INFO - [MCMC] checkpoint at step 2000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:28:47 - INFO - dingo.fitting - MCMC step 2200/10000, acc=0.123, max lnP=25952.9
+14:28:47 - INFO - MCMC step 2200/10000, acc=0.123, max lnP=25952.9
+14:31:16 - INFO - dingo.fitting - MCMC step 2400/10000, acc=0.124, max lnP=25953.3
+14:31:16 - INFO - MCMC step 2400/10000, acc=0.124, max lnP=25953.3
+14:32:31 - INFO - dingo.fitting - [MCMC] checkpoint at step 2500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:32:31 - INFO - [MCMC] checkpoint at step 2500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:33:46 - INFO - dingo.fitting - MCMC step 2600/10000, acc=0.124, max lnP=25952.4
+14:33:46 - INFO - MCMC step 2600/10000, acc=0.124, max lnP=25952.4
+14:37:02 - INFO - dingo.fitting - MCMC step 2800/10000, acc=0.122, max lnP=25951.5
+14:37:02 - INFO - MCMC step 2800/10000, acc=0.122, max lnP=25951.5
+14:40:40 - INFO - dingo.fitting - MCMC step 3000/10000, acc=0.123, max lnP=25952.7
+14:40:40 - INFO - MCMC step 3000/10000, acc=0.123, max lnP=25952.7
+14:40:40 - INFO - dingo.fitting - [MCMC] checkpoint at step 3000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:40:40 - INFO - [MCMC] checkpoint at step 3000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:43:34 - INFO - dingo.fitting - MCMC step 3200/10000, acc=0.123, max lnP=25952.3
+14:43:34 - INFO - MCMC step 3200/10000, acc=0.123, max lnP=25952.3
+14:46:07 - INFO - dingo.fitting - MCMC step 3400/10000, acc=0.123, max lnP=25952.1
+14:46:07 - INFO - MCMC step 3400/10000, acc=0.123, max lnP=25952.1
+14:47:23 - INFO - dingo.fitting - [MCMC] checkpoint at step 3500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:47:23 - INFO - [MCMC] checkpoint at step 3500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:48:34 - INFO - dingo.fitting - MCMC step 3600/10000, acc=0.122, max lnP=25952.9
+14:48:34 - INFO - MCMC step 3600/10000, acc=0.122, max lnP=25952.9
+14:51:00 - INFO - dingo.fitting - MCMC step 3800/10000, acc=0.123, max lnP=25952.5
+14:51:00 - INFO - MCMC step 3800/10000, acc=0.123, max lnP=25952.5
+14:53:19 - INFO - dingo.fitting - MCMC step 4000/10000, acc=0.123, max lnP=25951.9
+14:53:19 - INFO - MCMC step 4000/10000, acc=0.123, max lnP=25951.9
+14:53:19 - INFO - dingo.fitting - [MCMC] checkpoint at step 4000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:53:19 - INFO - [MCMC] checkpoint at step 4000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:55:46 - INFO - dingo.fitting - MCMC step 4200/10000, acc=0.124, max lnP=25952.5
+14:55:46 - INFO - MCMC step 4200/10000, acc=0.124, max lnP=25952.5
+14:58:18 - INFO - dingo.fitting - MCMC step 4400/10000, acc=0.125, max lnP=25951.8
+14:58:18 - INFO - MCMC step 4400/10000, acc=0.125, max lnP=25951.8
+14:59:34 - INFO - dingo.fitting - [MCMC] checkpoint at step 4500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+14:59:34 - INFO - [MCMC] checkpoint at step 4500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:00:45 - INFO - dingo.fitting - MCMC step 4600/10000, acc=0.126, max lnP=25953.1
+15:00:45 - INFO - MCMC step 4600/10000, acc=0.126, max lnP=25953.1
+15:03:33 - INFO - dingo.fitting - MCMC step 4800/10000, acc=0.127, max lnP=25952.3
+15:03:33 - INFO - MCMC step 4800/10000, acc=0.127, max lnP=25952.3
+15:06:53 - INFO - dingo.fitting - MCMC step 5000/10000, acc=0.127, max lnP=25952.4
+15:06:53 - INFO - MCMC step 5000/10000, acc=0.127, max lnP=25952.4
+15:06:53 - INFO - dingo.fitting - [MCMC] checkpoint at step 5000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:06:53 - INFO - [MCMC] checkpoint at step 5000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:09:43 - INFO - dingo.fitting - MCMC step 5200/10000, acc=0.127, max lnP=25952.1
+15:09:43 - INFO - MCMC step 5200/10000, acc=0.127, max lnP=25952.1
+15:12:32 - INFO - dingo.fitting - MCMC step 5400/10000, acc=0.128, max lnP=25952.7
+15:12:32 - INFO - MCMC step 5400/10000, acc=0.128, max lnP=25952.7
+15:13:52 - INFO - dingo.fitting - [MCMC] checkpoint at step 5500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:13:52 - INFO - [MCMC] checkpoint at step 5500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:15:12 - INFO - dingo.fitting - MCMC step 5600/10000, acc=0.128, max lnP=25951.8
+15:15:12 - INFO - MCMC step 5600/10000, acc=0.128, max lnP=25951.8
+15:17:52 - INFO - dingo.fitting - MCMC step 5800/10000, acc=0.129, max lnP=25953.4
+15:17:52 - INFO - MCMC step 5800/10000, acc=0.129, max lnP=25953.4
+15:20:48 - INFO - dingo.fitting - MCMC step 6000/10000, acc=0.129, max lnP=25952.6
+15:20:48 - INFO - MCMC step 6000/10000, acc=0.129, max lnP=25952.6
+15:20:48 - INFO - dingo.fitting - [MCMC] checkpoint at step 6000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:20:48 - INFO - [MCMC] checkpoint at step 6000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:23:51 - INFO - dingo.fitting - MCMC step 6200/10000, acc=0.129, max lnP=25952.5
+15:23:51 - INFO - MCMC step 6200/10000, acc=0.129, max lnP=25952.5
+15:27:22 - INFO - dingo.fitting - MCMC step 6400/10000, acc=0.129, max lnP=25953.3
+15:27:22 - INFO - MCMC step 6400/10000, acc=0.129, max lnP=25953.3
+15:28:44 - INFO - dingo.fitting - [MCMC] checkpoint at step 6500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:28:44 - INFO - [MCMC] checkpoint at step 6500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+15:30:07 - INFO - dingo.fitting - MCMC step 6600/10000, acc=0.128, max lnP=25952.4
+15:30:07 - INFO - MCMC step 6600/10000, acc=0.128, max lnP=25952.4
+16:44:37 - INFO - dingo.fitting - MCMC step 6800/10000, acc=0.129, max lnP=25953
+16:44:37 - INFO - MCMC step 6800/10000, acc=0.129, max lnP=25953
+17:32:00 - INFO - dingo.fitting - MCMC step 7000/10000, acc=0.128, max lnP=25952.2
+17:32:00 - INFO - MCMC step 7000/10000, acc=0.128, max lnP=25952.2
+17:32:00 - INFO - dingo.fitting - [MCMC] checkpoint at step 7000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+17:32:00 - INFO - [MCMC] checkpoint at step 7000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+20:34:45 - INFO - dingo.fitting - MCMC step 7200/10000, acc=0.128, max lnP=25951.5
+20:34:45 - INFO - MCMC step 7200/10000, acc=0.128, max lnP=25951.5
+22:34:10 - INFO - dingo.fitting - MCMC step 7400/10000, acc=0.129, max lnP=25951.9
+22:34:10 - INFO - MCMC step 7400/10000, acc=0.129, max lnP=25951.9
+23:37:52 - INFO - dingo.fitting - [MCMC] checkpoint at step 7500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+23:37:52 - INFO - [MCMC] checkpoint at step 7500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+00:27:26 - INFO - dingo.fitting - MCMC step 7600/10000, acc=0.129, max lnP=25952.7
+00:27:26 - INFO - MCMC step 7600/10000, acc=0.129, max lnP=25952.7
+02:24:51 - INFO - dingo.fitting - MCMC step 7800/10000, acc=0.129, max lnP=25951.8
+02:24:51 - INFO - MCMC step 7800/10000, acc=0.129, max lnP=25951.8
+07:42:01 - INFO - dingo.fitting - MCMC step 8000/10000, acc=0.129, max lnP=25951.9
+07:42:01 - INFO - MCMC step 8000/10000, acc=0.129, max lnP=25951.9
+07:42:02 - INFO - dingo.fitting - [MCMC] checkpoint at step 8000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+07:42:02 - INFO - [MCMC] checkpoint at step 8000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+10:28:01 - INFO - dingo.fitting - MCMC step 8200/10000, acc=0.129, max lnP=25952.5
+10:28:01 - INFO - MCMC step 8200/10000, acc=0.129, max lnP=25952.5
+11:01:47 - INFO - dingo.fitting - MCMC step 8400/10000, acc=0.130, max lnP=25951.7
+11:01:47 - INFO - MCMC step 8400/10000, acc=0.130, max lnP=25951.7
+11:03:56 - INFO - dingo.fitting - [MCMC] checkpoint at step 8500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:03:56 - INFO - [MCMC] checkpoint at step 8500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:05:16 - INFO - dingo.fitting - MCMC step 8600/10000, acc=0.130, max lnP=25953
+11:05:16 - INFO - MCMC step 8600/10000, acc=0.130, max lnP=25953
+11:07:45 - INFO - dingo.fitting - MCMC step 8800/10000, acc=0.131, max lnP=25952.3
+11:07:45 - INFO - MCMC step 8800/10000, acc=0.131, max lnP=25952.3
+11:10:10 - INFO - dingo.fitting - MCMC step 9000/10000, acc=0.130, max lnP=25952.3
+11:10:10 - INFO - MCMC step 9000/10000, acc=0.130, max lnP=25952.3
+11:10:10 - INFO - dingo.fitting - [MCMC] checkpoint at step 9000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:10:10 - INFO - [MCMC] checkpoint at step 9000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:49:11 - INFO - dingo.fitting - MCMC step 9200/10000, acc=0.130, max lnP=25951.7
+11:49:11 - INFO - MCMC step 9200/10000, acc=0.130, max lnP=25951.7
+11:51:37 - INFO - dingo.fitting - MCMC step 9400/10000, acc=0.130, max lnP=25952.5
+11:51:37 - INFO - MCMC step 9400/10000, acc=0.130, max lnP=25952.5
+11:52:49 - INFO - dingo.fitting - [MCMC] checkpoint at step 9500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:52:49 - INFO - [MCMC] checkpoint at step 9500 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:54:00 - INFO - dingo.fitting - MCMC step 9600/10000, acc=0.129, max lnP=25953.1
+11:54:00 - INFO - MCMC step 9600/10000, acc=0.129, max lnP=25953.1
+11:56:19 - INFO - dingo.fitting - MCMC step 9800/10000, acc=0.129, max lnP=25952.9
+11:56:19 - INFO - MCMC step 9800/10000, acc=0.129, max lnP=25952.9
+11:58:49 - INFO - dingo.fitting - MCMC step 10000/10000, acc=0.128, max lnP=25952.2
+11:58:49 - INFO - MCMC step 10000/10000, acc=0.128, max lnP=25952.2
+11:58:49 - INFO - dingo.fitting - [MCMC] checkpoint at step 10000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:58:49 - INFO - [MCMC] checkpoint at step 10000 -> ../mcmc_results/ID15665_chain_checkpoint.npz
+11:58:49 - INFO - dingo.fitting - [MCMC] done: 10000 steps, 256000 post-burn-in samples, acc=0.128
+11:58:49 - INFO - [MCMC] done: 10000 steps, 256000 post-burn-in samples, acc=0.128
+11:58:49 - INFO - dingo.fitting - [MCMC] chain saved to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results/ID15665_chain.npz
+11:58:49 - INFO - [MCMC] chain saved to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results/ID15665_chain.npz
+11:58:49 - INFO - --- posterior: median, -16th, +84th ---
+11:58:49 - INFO -   velocity.V_rot           521.3698  -29.1136 +32.1075
+11:58:49 - INFO -   velocity.R_v               3.3907  -0.0568 +0.0515
+11:58:49 - INFO -   velocity.x0_v             42.4765  -0.0725 +0.0763
+11:58:49 - INFO -   velocity.y0_v             41.3998  -0.0743 +0.1498
+11:58:49 - INFO -   velocity.theta_v           2.3256  -0.0085 +0.0061
+11:58:49 - INFO -   velocity.inc_v             0.4815  -0.0307 +0.0317
+11:58:49 - INFO -   image.R.dx                 0.9325  -0.0152 +0.0152
+11:58:49 - INFO -   image.R.dy                 0.2287  -0.0103 +0.0101
+11:58:49 - INFO -   image.C.dx                -0.1510  -0.0097 +0.0096
+11:58:49 - INFO -   image.C.dy                 0.9667  -0.0145 +0.0145
+11:58:49 - INFO -   noise.ln_f                -0.3155  -0.0089 +0.0088
+11:58:49 - INFO -   velocity.Vsini           241.4517  -1.5806 +1.5569
+11:58:49 - WARNING - The chain is shorter than 50 times the integrated autocorrelation time for 2 parameter(s). Use this estimate with caution and run a longer chain!
+N/50 = 160;
+tau: [167.97733516 124.29655382 114.35146588 145.98596762 137.77680658
+ 164.70029967  93.48316626  80.29416891  82.44704213  74.10552816
+  67.89596552]
+11:58:49 - INFO - --- diagnostics ---
+11:58:49 - INFO -   acceptance   mean=0.128 min=0.121 max=0.135 (want 0.2-0.5)
+11:58:49 - INFO -   -inf fraction  0
+11:58:49 - INFO -   n_steps/tau  worst = 47.6 for velocity.V_rot (want > 50)
+11:58:49 - INFO -     velocity.V_rot       tau=   168.0  n/tau=   47.6  split-half shift=0.081 sigma
+11:58:49 - INFO -     velocity.R_v         tau=   124.3  n/tau=   64.4  split-half shift=0.127 sigma
+11:58:49 - INFO -     velocity.x0_v        tau=   114.4  n/tau=   70.0  split-half shift=0.004 sigma
+11:58:49 - INFO -     velocity.y0_v        tau=   146.0  n/tau=   54.8  split-half shift=0.017 sigma
+11:58:49 - INFO -     velocity.theta_v     tau=   137.8  n/tau=   58.1  split-half shift=0.041 sigma
+11:58:49 - INFO -     velocity.inc_v       tau=   164.7  n/tau=   48.6  split-half shift=0.079 sigma
+11:58:49 - INFO -     image.R.dx           tau=    93.5  n/tau=   85.6  split-half shift=0.095 sigma
+11:58:49 - INFO -     image.R.dy           tau=    80.3  n/tau=   99.6  split-half shift=0.037 sigma
+11:58:49 - INFO -     image.C.dx           tau=    82.4  n/tau=   97.0  split-half shift=0.026 sigma
+11:58:49 - INFO -     image.C.dy           tau=    74.1  n/tau=  108.0  split-half shift=0.025 sigma
+11:58:49 - INFO -     noise.ln_f           tau=    67.9  n/tau=  117.8  split-half shift=0.011 sigma
+11:58:49 - WARNING -   chain is too short for a reliable autocorrelation time; increase mcmc.nsteps
+11:58:49 - INFO - --- posterior MAP vs Adam MAP (in posterior sigma) ---
+11:58:49 - INFO -   velocity.V_rot       +0.87 sigma
+11:58:49 - INFO -   velocity.R_v         +1.67 sigma
+11:58:49 - INFO -   velocity.x0_v        +0.71 sigma
+11:58:49 - INFO -   velocity.y0_v        +0.19 sigma
+11:58:49 - INFO -   velocity.theta_v     -0.53 sigma
+11:58:49 - INFO -   velocity.inc_v       -0.76 sigma
+11:58:49 - INFO -   image.R.dx           +0.51 sigma
+11:58:49 - INFO -   image.R.dy           -0.02 sigma
+11:58:49 - INFO -   image.C.dx           -0.28 sigma
+11:58:49 - INFO -   image.C.dy           -0.09 sigma
+11:58:49 - INFO - --- derived (kpc/pixel = 0.520 at z=1.1613) ---
+11:58:49 - INFO -   R_v [kpc]                  1.7627  -0.0295 +0.0268
+11:58:49 - INFO -   log10 M_dyn(<2 kpc)      10.5669  -0.0494 +0.0507
+11:58:49 - INFO -   log10 M_dyn(<5 kpc)      11.2885  -0.0494 +0.0515
+11:58:51 - INFO - Found 'auto' as default backend, checking available backends
+11:58:51 - INFO - Matplotlib is available, defining as default backend
+11:58:51 - INFO - arviz_base 1.2.0 available, exposing its functions as part of the `arviz` namespace
+11:58:51 - INFO - arviz_stats 1.2.0 available, exposing its functions as part of the `arviz` namespace
+11:58:51 - INFO - arviz_plots 1.2.0 available, exposing its functions as part of the `arviz` namespace
+11:58:56 - INFO - plots written to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results
+11:58:56 - INFO - IMPORTANT: these posterior widths are the raw likelihood widths. The R-C residuals are spatially correlated, so they must be multiplied by the inflation factors measured by validate_mcmc.py before being quoted.

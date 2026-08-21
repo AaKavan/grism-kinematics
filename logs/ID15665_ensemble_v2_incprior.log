@@ -1,0 +1,22 @@
+01:50:05 - WARNING - dingo.fitting - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+01:50:05 - WARNING - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+01:50:36 - WARNING - theta_true[velocity.x0_v] is 1.2 prior sigma from its prior mean (42.4160 vs 40.0000 +- 2.0000). If that prior is informative, coverage for it will be biased low; consider --truth-override velocity.x0_v=40.0
+01:50:36 - WARNING - theta_true[velocity.inc_v] is 3.1 prior sigma from its prior mean (0.5043 vs 0.6412 +- 0.0436). If that prior is informative, coverage for it will be biased low; consider --truth-override velocity.inc_v=0.6412
+01:50:36 - INFO - theta_true = {'velocity.V_rot': 506.381, 'velocity.R_v': 3.3139, 'velocity.x0_v': 42.416, 'velocity.y0_v': 41.3248, 'velocity.theta_v': 2.3275, 'velocity.inc_v': 0.5043, 'image.R.dx': 0.6417, 'image.R.dy': 0.4044, 'image.C.dx': -0.2724, 'image.C.dy': -0.3908}
+01:50:36 - INFO - running 20 mocks on 6 processes (32x1200 after 400 burn each)
+12:02:51 - INFO - 20/20 mocks completed
+12:02:51 - INFO - --- ensemble calibration ---
+12:02:51 - INFO - parameter                    bias    scatter      width  inflation  coverage
+12:02:51 - INFO - velocity.V_rot           102.2650    44.0806    44.3714       0.99      0.05
+12:02:51 - INFO - velocity.R_v               0.2448     0.1719     0.0786       2.19      0.05
+12:02:51 - INFO - velocity.x0_v              0.3115     0.3754     0.1486       2.53      0.20
+12:02:51 - INFO - velocity.y0_v              0.3984     0.5352     0.1731       3.09      0.20
+12:02:51 - INFO - velocity.theta_v          -0.0413     0.0450     0.0142       3.16      0.30
+12:02:51 - INFO - velocity.inc_v            -0.0806     0.0332     0.0331       1.00      0.05
+12:02:51 - INFO - image.R.dx                -0.0294     0.0472     0.0191       2.47      0.40
+12:02:51 - INFO - image.R.dy                 0.1365     0.3625     0.0128      28.24      0.40
+12:02:51 - INFO - image.C.dx                 0.0253     0.0079     0.0087       0.91      0.00
+12:02:51 - INFO - image.C.dy                 0.1188     0.3397     0.0257      13.24      0.20
+12:02:51 - INFO - noise.ln_f                    nan     0.0102     0.0096       1.07       nan
+12:02:51 - INFO - median inflation factor = 2.47
+12:02:51 - INFO - Multiply the production posterior widths by the per-parameter inflation factor above before quoting any uncertainty.

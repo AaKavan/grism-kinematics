@@ -1,0 +1,200 @@
+14:28:19 - WARNING - dingo.fitting - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+14:28:19 - WARNING - [KinematicsFitter] summary.r_fit is deprecated under (x,y) origin=(0,0). Prefer explicit cutouts/centers in the config.
+14:28:19 - INFO - dingo.fitting - [KinematicsFitter] using coordinate unit = pix
+14:28:19 - INFO - [KinematicsFitter] using coordinate unit = pix
+14:28:19 - INFO - cutouts: R=(-50, 24, 81, 81) C=(43, -2, 81, 81)
+14:28:19 - INFO - dingo.fitting - Starting fitting stage 1/2: method=Adam
+14:28:19 - INFO - Starting fitting stage 1/2: method=Adam
+14:28:19 - INFO - dingo.fitting - Stage 1, Step 1, loss=0.87001, lr=0.05000xy_iters=(17, 28)
+14:28:19 - INFO - Stage 1, Step 1, loss=0.87001, lr=0.05000xy_iters=(17, 28)
+14:28:20 - INFO - dingo.fitting - Stage 1, Step 100, loss=0.1087, lr=0.05000xy_iters=(8, 6)
+14:28:20 - INFO - Stage 1, Step 100, loss=0.1087, lr=0.05000xy_iters=(8, 6)
+14:28:21 - INFO - dingo.fitting - Stage 1, Step 200, loss=0.099093, lr=0.05000xy_iters=(8, 4)
+14:28:21 - INFO - Stage 1, Step 200, loss=0.099093, lr=0.05000xy_iters=(8, 4)
+14:28:22 - INFO - dingo.fitting - Stage 1, Step 300, loss=0.098251, lr=0.05000xy_iters=(8, 6)
+14:28:22 - INFO - Stage 1, Step 300, loss=0.098251, lr=0.05000xy_iters=(8, 6)
+14:28:23 - INFO - dingo.fitting - Stage 1, Step 400, loss=0.09826, lr=0.05000xy_iters=(10, 4)
+14:28:23 - INFO - Stage 1, Step 400, loss=0.09826, lr=0.05000xy_iters=(10, 4)
+14:28:24 - INFO - dingo.fitting - Stage 1, Step 500, loss=0.097975, lr=0.05000xy_iters=(7, 6)
+14:28:24 - INFO - Stage 1, Step 500, loss=0.097975, lr=0.05000xy_iters=(7, 6)
+14:28:25 - INFO - dingo.fitting - Stage 1, Step 600, loss=0.09798, lr=0.05000xy_iters=(13, 6)
+14:28:25 - INFO - Stage 1, Step 600, loss=0.09798, lr=0.05000xy_iters=(13, 6)
+14:28:26 - INFO - dingo.fitting - Stage 1, Step 700, loss=0.098028, lr=0.05000xy_iters=(9, 6)
+14:28:26 - INFO - Stage 1, Step 700, loss=0.098028, lr=0.05000xy_iters=(9, 6)
+14:28:28 - INFO - dingo.fitting - Stage 1, Step 800, loss=0.098428, lr=0.05000xy_iters=(11, 8)
+14:28:28 - INFO - Stage 1, Step 800, loss=0.098428, lr=0.05000xy_iters=(11, 8)
+14:28:29 - INFO - dingo.fitting - Stage 1, Step 900, loss=0.097947, lr=0.05000xy_iters=(6, 5)
+14:28:29 - INFO - Stage 1, Step 900, loss=0.097947, lr=0.05000xy_iters=(6, 5)
+14:28:30 - INFO - dingo.fitting - Stage 1, Step 1000, loss=0.098051, lr=0.05000xy_iters=(11, 5)
+14:28:30 - INFO - Stage 1, Step 1000, loss=0.098051, lr=0.05000xy_iters=(11, 5)
+14:28:31 - INFO - dingo.fitting - Stage 1, Step 1100, loss=0.09793, lr=0.03535xy_iters=(8, 4)
+14:28:31 - INFO - Stage 1, Step 1100, loss=0.09793, lr=0.03535xy_iters=(8, 4)
+14:28:31 - INFO - dingo.fitting - Stage 1, Step 1200, loss=0.097914, lr=0.03535xy_iters=(5, 2)
+14:28:31 - INFO - Stage 1, Step 1200, loss=0.097914, lr=0.03535xy_iters=(5, 2)
+14:28:32 - INFO - dingo.fitting - Stage 1, Step 1300, loss=0.097948, lr=0.03535xy_iters=(6, 4)
+14:28:32 - INFO - Stage 1, Step 1300, loss=0.097948, lr=0.03535xy_iters=(6, 4)
+14:28:33 - INFO - dingo.fitting - Stage 1, Step 1400, loss=0.097914, lr=0.03535xy_iters=(11, 3)
+14:28:33 - INFO - Stage 1, Step 1400, loss=0.097914, lr=0.03535xy_iters=(11, 3)
+14:28:34 - INFO - dingo.fitting - Stage 1, Step 1500, loss=0.097913, lr=0.03535xy_iters=(7, 5)
+14:28:34 - INFO - Stage 1, Step 1500, loss=0.097913, lr=0.03535xy_iters=(7, 5)
+14:28:35 - INFO - dingo.fitting - Stage 1, Step 1600, loss=0.097965, lr=0.03535xy_iters=(13, 6)
+14:28:35 - INFO - Stage 1, Step 1600, loss=0.097965, lr=0.03535xy_iters=(13, 6)
+14:28:36 - INFO - dingo.fitting - Stage 1, Step 1700, loss=0.097932, lr=0.03535xy_iters=(5, 5)
+14:28:36 - INFO - Stage 1, Step 1700, loss=0.097932, lr=0.03535xy_iters=(5, 5)
+14:28:37 - INFO - dingo.fitting - Stage 1, Step 1800, loss=0.098014, lr=0.03535xy_iters=(11, 4)
+14:28:37 - INFO - Stage 1, Step 1800, loss=0.098014, lr=0.03535xy_iters=(11, 4)
+14:28:38 - INFO - dingo.fitting - Stage 1, Step 1900, loss=0.09813, lr=0.03535xy_iters=(9, 8)
+14:28:38 - INFO - Stage 1, Step 1900, loss=0.09813, lr=0.03535xy_iters=(9, 8)
+14:28:39 - INFO - dingo.fitting - Stage 1, Step 2000, loss=0.098191, lr=0.03535xy_iters=(12, 3)
+14:28:39 - INFO - Stage 1, Step 2000, loss=0.098191, lr=0.03535xy_iters=(12, 3)
+14:28:40 - INFO - dingo.fitting - Stage 1, Step 2100, loss=0.097914, lr=0.02499xy_iters=(2, 2)
+14:28:40 - INFO - Stage 1, Step 2100, loss=0.097914, lr=0.02499xy_iters=(2, 2)
+14:28:41 - INFO - dingo.fitting - Stage 1, Step 2200, loss=0.097901, lr=0.02499xy_iters=(7, 3)
+14:28:41 - INFO - Stage 1, Step 2200, loss=0.097901, lr=0.02499xy_iters=(7, 3)
+14:28:42 - INFO - dingo.fitting - Stage 1, Step 2300, loss=0.097909, lr=0.02499xy_iters=(8, 4)
+14:28:42 - INFO - Stage 1, Step 2300, loss=0.097909, lr=0.02499xy_iters=(8, 4)
+14:28:42 - INFO - dingo.fitting - Stage 1, Step 2400, loss=0.097914, lr=0.02499xy_iters=(8, 4)
+14:28:42 - INFO - Stage 1, Step 2400, loss=0.097914, lr=0.02499xy_iters=(8, 4)
+14:28:43 - INFO - dingo.fitting - Stage 1, Step 2500, loss=0.097902, lr=0.02499xy_iters=(5, 4)
+14:28:43 - INFO - Stage 1, Step 2500, loss=0.097902, lr=0.02499xy_iters=(5, 4)
+14:28:43 - INFO - dingo.fitting - Starting fitting stage 2/2: method=Adam
+14:28:43 - INFO - Starting fitting stage 2/2: method=Adam
+14:28:43 - INFO - dingo.fitting - Stage 2, Step 1, loss=0.097904, lr=0.00300xy_iters=(28, 18)
+14:28:43 - INFO - Stage 2, Step 1, loss=0.097904, lr=0.00300xy_iters=(28, 18)
+14:28:44 - INFO - dingo.fitting - Stage 2, Step 100, loss=0.097904, lr=0.00300xy_iters=(2, 0)
+14:28:44 - INFO - Stage 2, Step 100, loss=0.097904, lr=0.00300xy_iters=(2, 0)
+14:28:44 - INFO - dingo.fitting - Stage 2, Step 200, loss=0.097919, lr=0.00212xy_iters=(0, 0)
+14:28:44 - INFO - Stage 2, Step 200, loss=0.097919, lr=0.00212xy_iters=(0, 0)
+14:28:44 - INFO - dingo.fitting - Stage 2, Step 300, loss=0.097916, lr=0.00150xy_iters=(0, 0)
+14:28:44 - INFO - Stage 2, Step 300, loss=0.097916, lr=0.00150xy_iters=(0, 0)
+14:28:45 - INFO - dingo.fitting - Stage 2, Step 400, loss=0.097914, lr=0.00106xy_iters=(2, 2)
+14:28:45 - INFO - Stage 2, Step 400, loss=0.097914, lr=0.00106xy_iters=(2, 2)
+14:28:45 - INFO - dingo.fitting - Stage 2, Step 500, loss=0.097916, lr=0.00075xy_iters=(0, 0)
+14:28:45 - INFO - Stage 2, Step 500, loss=0.097916, lr=0.00075xy_iters=(0, 0)
+14:28:45 - INFO - dingo.fitting - Stage 2, Step 600, loss=0.097927, lr=0.00053xy_iters=(0, 0)
+14:28:45 - INFO - Stage 2, Step 600, loss=0.097927, lr=0.00053xy_iters=(0, 0)
+14:28:46 - INFO - dingo.fitting - Stage 2, Step 700, loss=0.09793, lr=0.00037xy_iters=(0, 0)
+14:28:46 - INFO - Stage 2, Step 700, loss=0.09793, lr=0.00037xy_iters=(0, 0)
+14:28:46 - INFO - dingo.fitting - Stage 2, Step 800, loss=0.09793, lr=0.00026xy_iters=(0, 0)
+14:28:46 - INFO - Stage 2, Step 800, loss=0.09793, lr=0.00026xy_iters=(0, 0)
+14:28:46 - INFO - dingo.fitting - Stage 2, Step 900, loss=0.09793, lr=0.00019xy_iters=(0, 0)
+14:28:46 - INFO - Stage 2, Step 900, loss=0.09793, lr=0.00019xy_iters=(0, 0)
+14:28:46 - INFO - dingo.fitting - Stage 2, Step 1000, loss=0.09793, lr=0.00013xy_iters=(0, 0)
+14:28:46 - INFO - Stage 2, Step 1000, loss=0.09793, lr=0.00013xy_iters=(0, 0)
+14:28:47 - INFO - dingo.fitting - Stage 2, Step 1100, loss=0.09793, lr=0.00009xy_iters=(0, 0)
+14:28:47 - INFO - Stage 2, Step 1100, loss=0.09793, lr=0.00009xy_iters=(0, 0)
+14:28:47 - INFO - dingo.fitting - Stage 2, Step 1200, loss=0.09793, lr=0.00007xy_iters=(0, 0)
+14:28:47 - INFO - Stage 2, Step 1200, loss=0.09793, lr=0.00007xy_iters=(0, 0)
+14:28:47 - INFO - dingo.fitting - Stage 2, Step 1300, loss=0.09793, lr=0.00005xy_iters=(0, 0)
+14:28:47 - INFO - Stage 2, Step 1300, loss=0.09793, lr=0.00005xy_iters=(0, 0)
+14:28:48 - INFO - dingo.fitting - Stage 2, Step 1400, loss=0.09793, lr=0.00003xy_iters=(0, 0)
+14:28:48 - INFO - Stage 2, Step 1400, loss=0.09793, lr=0.00003xy_iters=(0, 0)
+14:28:48 - INFO - dingo.fitting - Stage 2, Step 1500, loss=0.09793, lr=0.00002xy_iters=(0, 0)
+14:28:48 - INFO - Stage 2, Step 1500, loss=0.09793, lr=0.00002xy_iters=(0, 0)
+14:28:48 - INFO - --- Adam MAP ---
+14:28:48 - INFO -   V_rot      = 506.3810
+14:28:48 - INFO -   R_v        = 3.3139
+14:28:48 - INFO -   x0_v       = 42.4160
+14:28:48 - INFO -   y0_v       = 41.3248
+14:28:48 - INFO -   theta_v    = 2.3275
+14:28:48 - INFO -   inc_v      = 0.5043
+14:28:48 - INFO -   R  dx,dy  = 0.6417, 0.4044
+14:28:48 - INFO -   C  dx,dy  = -0.2724, -0.3908
+14:28:48 - INFO - dingo.fitting - [MCMC] sampling the free parameters of fitting stage 1
+14:28:48 - INFO - [MCMC] sampling the free parameters of fitting stage 1
+14:28:48 - INFO - dingo.fitting - [MCMC] skipping array parameter result.emline_model (6561 elements)
+14:28:48 - INFO - [MCMC] skipping array parameter result.emline_model (6561 elements)
+14:28:48 - INFO - dingo.fitting - [MCMC] noise model frozen: sigma_R=0.0037841 sigma_C=0.0038251 var_base=2.8951e-05 N_pix=5412/6561
+14:28:48 - INFO - [MCMC] noise model frozen: sigma_R=0.0037841 sigma_C=0.0038251 var_base=2.8951e-05 N_pix=5412/6561
+14:28:49 - INFO - dingo.fitting - [MCMC] ndim=11 nwalkers=32 nburn=700 nsteps=2500; params=['velocity.V_rot', 'velocity.R_v', 'velocity.x0_v', 'velocity.y0_v', 'velocity.theta_v', 'velocity.inc_v', 'image.R.dx', 'image.R.dy', 'image.C.dx', 'image.C.dy', 'noise.ln_f']
+14:28:49 - INFO - [MCMC] ndim=11 nwalkers=32 nburn=700 nsteps=2500; params=['velocity.V_rot', 'velocity.R_v', 'velocity.x0_v', 'velocity.y0_v', 'velocity.theta_v', 'velocity.inc_v', 'image.R.dx', 'image.R.dy', 'image.C.dx', 'image.C.dy', 'noise.ln_f']
+14:28:49 - INFO - dingo.fitting - [MCMC] lnP(theta0)=22096.2
+14:28:49 - INFO - [MCMC] lnP(theta0)=22096.2
+14:28:50 - INFO - dingo.fitting - MCMC step 1/3200, acc=0.500, max lnP=22406.8
+14:28:50 - INFO - MCMC step 1/3200, acc=0.500, max lnP=22406.8
+14:31:19 - INFO - dingo.fitting - MCMC step 200/3200, acc=0.129, max lnP=22823.2
+14:31:19 - INFO - MCMC step 200/3200, acc=0.129, max lnP=22823.2
+14:33:36 - INFO - dingo.fitting - MCMC step 400/3200, acc=0.134, max lnP=22825.7
+14:33:36 - INFO - MCMC step 400/3200, acc=0.134, max lnP=22825.7
+14:36:03 - INFO - dingo.fitting - MCMC step 600/3200, acc=0.148, max lnP=22826.1
+14:36:03 - INFO - MCMC step 600/3200, acc=0.148, max lnP=22826.1
+14:38:29 - INFO - dingo.fitting - MCMC step 800/3200, acc=0.156, max lnP=22826.6
+14:38:29 - INFO - MCMC step 800/3200, acc=0.156, max lnP=22826.6
+14:40:56 - INFO - dingo.fitting - MCMC step 1000/3200, acc=0.156, max lnP=22825.7
+14:40:56 - INFO - MCMC step 1000/3200, acc=0.156, max lnP=22825.7
+14:43:27 - INFO - dingo.fitting - MCMC step 1200/3200, acc=0.159, max lnP=22827.5
+14:43:27 - INFO - MCMC step 1200/3200, acc=0.159, max lnP=22827.5
+14:45:52 - INFO - dingo.fitting - MCMC step 1400/3200, acc=0.158, max lnP=22826.5
+14:45:52 - INFO - MCMC step 1400/3200, acc=0.158, max lnP=22826.5
+14:48:31 - INFO - dingo.fitting - MCMC step 1600/3200, acc=0.161, max lnP=22826.3
+14:48:31 - INFO - MCMC step 1600/3200, acc=0.161, max lnP=22826.3
+14:51:00 - INFO - dingo.fitting - MCMC step 1800/3200, acc=0.164, max lnP=22826.4
+14:51:00 - INFO - MCMC step 1800/3200, acc=0.164, max lnP=22826.4
+14:53:26 - INFO - dingo.fitting - MCMC step 2000/3200, acc=0.165, max lnP=22825.7
+14:53:26 - INFO - MCMC step 2000/3200, acc=0.165, max lnP=22825.7
+14:55:46 - INFO - dingo.fitting - MCMC step 2200/3200, acc=0.164, max lnP=22825.7
+14:55:46 - INFO - MCMC step 2200/3200, acc=0.164, max lnP=22825.7
+14:58:13 - INFO - dingo.fitting - MCMC step 2400/3200, acc=0.166, max lnP=22826.7
+14:58:13 - INFO - MCMC step 2400/3200, acc=0.166, max lnP=22826.7
+15:00:51 - INFO - dingo.fitting - MCMC step 2600/3200, acc=0.168, max lnP=22826.8
+15:00:51 - INFO - MCMC step 2600/3200, acc=0.168, max lnP=22826.8
+15:03:15 - INFO - dingo.fitting - MCMC step 2800/3200, acc=0.170, max lnP=22826.1
+15:03:15 - INFO - MCMC step 2800/3200, acc=0.170, max lnP=22826.1
+15:05:44 - INFO - dingo.fitting - MCMC step 3000/3200, acc=0.170, max lnP=22826.7
+15:05:44 - INFO - MCMC step 3000/3200, acc=0.170, max lnP=22826.7
+15:08:10 - INFO - dingo.fitting - MCMC step 3200/3200, acc=0.171, max lnP=22825.8
+15:08:10 - INFO - MCMC step 3200/3200, acc=0.171, max lnP=22825.8
+15:08:10 - INFO - dingo.fitting - [MCMC] done: 3200 steps, 80000 post-burn-in samples, acc=0.171
+15:08:10 - INFO - [MCMC] done: 3200 steps, 80000 post-burn-in samples, acc=0.171
+15:08:10 - INFO - dingo.fitting - [MCMC] chain saved to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results/ID15665_chain.npz
+15:08:10 - INFO - [MCMC] chain saved to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results/ID15665_chain.npz
+15:08:10 - INFO - --- posterior: median, -16th, +84th ---
+15:08:10 - INFO -   velocity.V_rot           478.7026  -21.5711 +23.0009
+15:08:10 - INFO -   velocity.R_v               3.4059  -0.0953 +0.0949
+15:08:10 - INFO -   velocity.x0_v             41.8554  -0.0930 +0.0963
+15:08:10 - INFO -   velocity.y0_v             40.8958  -0.0962 +0.1020
+15:08:10 - INFO -   velocity.theta_v           2.3973  -0.0063 +0.0061
+15:08:10 - INFO -   velocity.inc_v             0.5407  -0.0285 +0.0287
+15:08:10 - INFO -   image.R.dx                 0.5968  -0.0182 +0.0185
+15:08:10 - INFO -   image.R.dy                 0.4099  -0.0118 +0.0120
+15:08:10 - INFO -   image.C.dx                -0.2503  -0.0110 +0.0110
+15:08:10 - INFO -   image.C.dy                -0.4166  -0.0183 +0.0187
+15:08:10 - INFO -   noise.ln_f                -0.4114  -0.0097 +0.0093
+15:08:10 - INFO -   velocity.Vsini           246.2910  -1.6732 +1.6551
+15:08:10 - WARNING - The chain is shorter than 50 times the integrated autocorrelation time for 5 parameter(s). Use this estimate with caution and run a longer chain!
+N/50 = 50;
+tau: [79.07393029 45.149516   48.77359721 61.54849484 60.70619716 75.44159665
+ 44.87984398 44.34794464 43.12769329 50.58491883 44.89409929]
+15:08:10 - INFO - --- diagnostics ---
+15:08:10 - INFO -   acceptance   mean=0.171 min=0.151 max=0.189 (want 0.2-0.5)
+15:08:10 - INFO -   -inf fraction  0
+15:08:10 - INFO -   n_steps/tau  worst = 31.6 for velocity.V_rot (want > 50)
+15:08:10 - INFO -     velocity.V_rot       tau=    79.1  n/tau=   31.6  split-half shift=0.050 sigma
+15:08:10 - INFO -     velocity.R_v         tau=    45.1  n/tau=   55.4  split-half shift=0.025 sigma
+15:08:10 - INFO -     velocity.x0_v        tau=    48.8  n/tau=   51.3  split-half shift=0.109 sigma
+15:08:10 - INFO -     velocity.y0_v        tau=    61.5  n/tau=   40.6  split-half shift=0.114 sigma
+15:08:10 - INFO -     velocity.theta_v     tau=    60.7  n/tau=   41.2  split-half shift=0.103 sigma
+15:08:10 - INFO -     velocity.inc_v       tau=    75.4  n/tau=   33.1  split-half shift=0.062 sigma
+15:08:10 - INFO -     image.R.dx           tau=    44.9  n/tau=   55.7  split-half shift=0.086 sigma
+15:08:10 - INFO -     image.R.dy           tau=    44.3  n/tau=   56.4  split-half shift=0.048 sigma
+15:08:10 - INFO -     image.C.dx           tau=    43.1  n/tau=   58.0  split-half shift=0.048 sigma
+15:08:10 - INFO -     image.C.dy           tau=    50.6  n/tau=   49.4  split-half shift=0.036 sigma
+15:08:10 - INFO -     noise.ln_f           tau=    44.9  n/tau=   55.7  split-half shift=0.045 sigma
+15:08:10 - WARNING -   chain is too short for a reliable autocorrelation time; increase mcmc.nsteps
+15:08:10 - INFO - --- posterior MAP vs Adam MAP (in posterior sigma) ---
+15:08:10 - INFO -   velocity.V_rot       -0.56 sigma
+15:08:10 - INFO -   velocity.R_v         +1.66 sigma
+15:08:10 - INFO -   velocity.x0_v        -5.70 sigma
+15:08:10 - INFO -   velocity.y0_v        -4.45 sigma
+15:08:10 - INFO -   velocity.theta_v     +11.28 sigma
+15:08:10 - INFO -   velocity.inc_v       +0.71 sigma
+15:08:10 - INFO -   image.R.dx           -2.01 sigma
+15:08:10 - INFO -   image.R.dy           +0.25 sigma
+15:08:10 - INFO -   image.C.dx           +1.98 sigma
+15:08:10 - INFO -   image.C.dy           -1.29 sigma
+15:08:10 - INFO - --- derived (kpc/pixel = 0.517 at z=1.123) ---
+15:08:10 - INFO -   R_v [kpc]                  1.7604  -0.0492 +0.0490
+15:08:10 - INFO -   log10 M_dyn(<2 kpc)      10.4927  -0.0366 +0.0399
+15:08:10 - INFO -   log10 M_dyn(<5 kpc)      11.2143  -0.0377 +0.0401
+15:08:12 - INFO - plots written to /Users/aakavan/Astro_Research/Galaxy_Kinematics/DINGO_development/mcmc_results
+15:08:12 - INFO - IMPORTANT: these posterior widths are the raw likelihood widths. The R-C residuals are spatially correlated, so they must be multiplied by the inflation factors measured by validate_mcmc.py before being quoted.
