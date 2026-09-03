@@ -1,5 +1,6 @@
 import torch
 import logging
+import json
 import yaml
 from dataclasses import dataclass
 from astropy.io import fits
@@ -608,6 +609,10 @@ class BaseFitter(ABC):
 
     _mcmc_loss_is_chi2 = False   # subclasses whose loss() IS a normalised chi2 set True
 
+    def _mcmc_likelihood_mode(self):
+        '''Canonical likelihood label used for chain provenance.'''
+        return 'gaussian'
+
     # fit_MCMC() overwrites these from the config. They are class defaults so that
     # log_likelihood() can also be called on its own -- e.g. to scan or profile the
     # objective -- without having to start a chain first.
@@ -707,6 +712,36 @@ class BaseFitter(ABC):
             else:
                 raise ValueError(f'unknown prior type for {name}: {t}')
         return lp
+
+    def _draw_mcmc_prior(self, rng):
+        '''Draw one point from the independent configured prior distributions.'''
+        values = []
+        for name, s in self._mcmc_priors:
+            t = s['type']
+            lo = float(s.get('min', -np.inf))
+            hi = float(s.get('max', np.inf))
+            if t == 'uniform':
+                if not (np.isfinite(lo) and np.isfinite(hi)):
+                    raise ValueError(f'prior initialization needs finite bounds for {name}')
+                values.append(rng.uniform(lo, hi))
+            elif t == 'log_uniform':
+                if lo <= 0 or not (np.isfinite(lo) and np.isfinite(hi)):
+                    raise ValueError(f'log_uniform prior needs finite positive bounds for {name}')
+                values.append(np.exp(rng.uniform(np.log(lo), np.log(hi))))
+            elif t == 'gaussian':
+                for _ in range(10000):
+                    v = rng.normal(float(s['mu']), float(s['sigma']))
+                    if lo <= v <= hi:
+                        values.append(v)
+                        break
+                else:
+                    raise RuntimeError(f'could not draw a bounded gaussian prior for {name}')
+            elif t == 'sin_i':
+                # p(i) proportional to sin(i), so cos(i) is uniform.
+                values.append(np.arccos(rng.uniform(np.cos(hi), np.cos(lo))))
+            else:
+                raise ValueError(f'unknown prior type for {name}: {t}')
+        return np.asarray(values, dtype=float)
 
     def log_likelihood(self, **extras):
         '''
@@ -865,21 +900,40 @@ class BaseFitter(ABC):
                 'and an informative inclination prior prevents it), or the prior '
                 'window in mcmc.priors is too narrow for this source.')
 
-        # Draw the initial ball inside the prior support: a walker starting at
-        # -inf can never move, and emcee would stall silently.
+        init_mode = str(mc.get('init', 'adam')).lower()
+        if init_mode not in {'adam', 'prior'}:
+            raise ValueError(f'unknown mcmc.init={init_mode!r}; choose `adam` or `prior`')
+
+        # Draw the initial positions. The historical `adam` mode starts a small
+        # ball around the optimizer. The `prior` mode is for broad-prior runs:
+        # draw from the configured priors and reject points with an invalid
+        # likelihood, so the chain can actually discover remote modes.
         p0 = np.empty((nwalkers, ndim))
-        for j in range(nwalkers):
-            for _ in range(1000):
-                cand = theta0 + scales*rng.standard_normal(ndim)
-                if np.isfinite(self.log_prior(cand)):
-                    p0[j] = cand
-                    break
-            else:
-                raise RuntimeError(
-                    f'could not draw walker {j} inside the prior support after 1000 '
-                    f'tries, even though theta0 is inside it. init_scatter is '
-                    f'probably far too wide for a parameter near a bound: '
-                    f'{dict(zip(self.mcmc_param_names, scales))}')
+        if init_mode == 'prior':
+            LOG.info('[MCMC] initializing walkers from the configured priors')
+            for j in range(nwalkers):
+                for attempt in range(1000):
+                    cand = self._draw_mcmc_prior(rng)
+                    if np.isfinite(self.log_probability(cand)):
+                        p0[j] = cand
+                        break
+                else:
+                    raise RuntimeError(
+                        f'could not draw a finite-likelihood walker {j} from the '
+                        'configured broad priors after 1000 attempts')
+        else:
+            for j in range(nwalkers):
+                for _ in range(1000):
+                    cand = theta0 + scales*rng.standard_normal(ndim)
+                    if np.isfinite(self.log_prior(cand)):
+                        p0[j] = cand
+                        break
+                else:
+                    raise RuntimeError(
+                        f'could not draw walker {j} inside the prior support after 1000 '
+                        f'tries, even though theta0 is inside it. init_scatter is '
+                        f'probably far too wide for a parameter near a bound: '
+                        f'{dict(zip(self.mcmc_param_names, scales))}')
 
         lnp0 = np.array([self.log_probability(p) for p in p0])
         if not np.all(np.isfinite(lnp0)):
@@ -898,27 +952,186 @@ class BaseFitter(ABC):
             # the default StretchMove copes badly with the V_rot--sin(inc_v) banana
             moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
 
+        # HDFBackend writes every accepted sampler step to disk. This makes a
+        # long run restartable without keeping the whole chain only in RAM;
+        # `resume: true` continues from the last completed step on the next
+        # notebook run. The final .npz export is still produced by save_mcmc().
+        backend_path = mc.get('backend')
+        resume = bool(mc.get('resume', True))
+        backend = None
+        resume_state = None
+        resume_chain = None
+        resume_log_prob = None
+        start_step = 0
+        backend_meta_path = None
+        if backend_path:
+            requested_backend_path = os.path.expanduser(str(backend_path))
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(requested_backend_path)) or '.', exist_ok=True)
+                backend_path = requested_backend_path
+                backend_meta_path = backend_path + '.json'
+                backend = emcee.backends.HDFBackend(backend_path)
+            except ImportError as exc:
+                # h5py is optional in the DINGO environment. A compressed NPZ
+                # checkpoint is a complete fallback: it stores the whole chain
+                # plus the last ensemble state needed to continue sampling.
+                LOG.warning(
+                    f'[MCMC] HDF5 backend unavailable ({exc}); using the NPZ '
+                    'checkpoint instead'
+                )
+                backend = None
+                backend_path = None
+                backend_meta_path = None
+
+            if backend is not None:
+                if os.path.exists(requested_backend_path) and resume:
+                    if backend.iteration:
+                        if backend.shape != (nwalkers, ndim):
+                            raise RuntimeError(
+                                f'[MCMC] existing backend has shape {backend.shape}, '
+                                f'but this run needs {(nwalkers, ndim)}; use a new backend path'
+                            )
+                        if os.path.exists(backend_meta_path):
+                            try:
+                                with open(backend_meta_path) as stream:
+                                    old_meta = json.load(stream)
+                                if old_meta.get('param_names') != self.mcmc_param_names:
+                                    raise RuntimeError(
+                                        '[MCMC] existing backend parameter names do not match '
+                                        'this configuration; use a new backend path'
+                                    )
+                                if old_meta.get('nburn') != nburn:
+                                    raise RuntimeError(
+                                        '[MCMC] existing backend has a different nburn; '
+                                        'keep nburn fixed when resuming'
+                                    )
+                            except RuntimeError:
+                                raise
+                            except Exception as exc:
+                                LOG.warning(f'[MCMC] could not read backend metadata: {exc}')
+                        start_step = int(backend.iteration)
+                        if start_step > nburn + nsteps:
+                            raise RuntimeError(
+                                f'[MCMC] backend already contains {start_step} steps, '
+                                f'but the requested target is only {nburn + nsteps}; '
+                                'increase nsteps or use a new backend path'
+                            )
+                        resume_state = backend.get_last_sample()
+                        LOG.info(
+                            f'[MCMC] resuming backend at step {start_step}/{nburn+nsteps}: '
+                            f'{backend_path}'
+                        )
+                    else:
+                        backend.reset(nwalkers, ndim)
+                else:
+                    backend.reset(nwalkers, ndim)
+
         sampler = emcee.EnsembleSampler(
-            nwalkers, ndim, self.log_probability, pool=pool, moves=moves
+            nwalkers, ndim, self.log_probability, pool=pool, moves=moves,
+            backend=backend
         )
 
-        # Checkpointing. A production chain is hours long, and without this a
-        # reboot or a kill loses every step: emcee keeps the chain in memory and
-        # save_mcmc() only runs after the loop. Writing to a .tmp and replacing
-        # keeps the checkpoint atomic, so a crash mid-write cannot corrupt it.
-        ckpt = mc.get('checkpoint')
+        # Legacy compressed checkpoints remain supported for configurations
+        # that do not specify an HDF5 backend. They are not written when the
+        # resumable backend above is active.
+        ckpt = mc.get('checkpoint') if backend is None else None
         ckpt_every = int(mc.get('checkpoint_every', 500))
         if ckpt:
             ckpt = os.path.expanduser(str(ckpt))
             os.makedirs(os.path.dirname(os.path.abspath(ckpt)) or '.', exist_ok=True)
 
+        # Resume from a dependency-free compressed checkpoint when HDF5 is not
+        # available. The final saved walker positions are sufficient to
+        # reconstruct emcee's state and continue the ensemble exactly from the
+        # last completed step (with a fresh random stream).
+        if ckpt and resume and os.path.exists(ckpt):
+            try:
+                with np.load(ckpt, allow_pickle=True) as saved:
+                    saved_chain = np.asarray(saved['chain'])
+                    saved_log_prob = np.asarray(saved['log_prob'])
+                    saved_names = [str(x) for x in saved['param_names'].tolist()]
+                    saved_nburn = int(saved['nburn'])
+                    start_step = int(
+                        saved['nsteps_done'] if 'nsteps_done' in saved.files
+                        else saved_chain.shape[0]
+                    )
+                if saved_names != self.mcmc_param_names:
+                    raise RuntimeError(
+                        '[MCMC] existing checkpoint parameter names do not match '
+                        'this configuration; use a new checkpoint path'
+                    )
+                if saved_nburn != nburn:
+                    raise RuntimeError(
+                        '[MCMC] existing checkpoint has a different nburn; '
+                        'keep nburn fixed when resuming'
+                    )
+                if saved_chain.shape != (start_step, nwalkers, ndim):
+                    raise RuntimeError(
+                        f'[MCMC] existing checkpoint shape {saved_chain.shape} is not '
+                        f'({start_step}, {nwalkers}, {ndim})'
+                    )
+                if saved_log_prob.shape != (start_step, nwalkers):
+                    raise RuntimeError('[MCMC] existing checkpoint log-probability shape is invalid')
+                if start_step > nburn + nsteps:
+                    raise RuntimeError(
+                        f'[MCMC] checkpoint already contains {start_step} steps, '
+                        f'but the requested target is only {nburn + nsteps}; '
+                        'increase nsteps or use a new checkpoint path'
+                    )
+                if start_step:
+                    resume_chain = saved_chain
+                    resume_log_prob = saved_log_prob
+                    resume_state = emcee.State(
+                        coords=saved_chain[-1], log_prob=saved_log_prob[-1]
+                    )
+                    LOG.info(
+                        f'[MCMC] resuming checkpoint at step {start_step}/{nburn+nsteps}: {ckpt}'
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(f'[MCMC] could not load checkpoint {ckpt}: {exc}') from exc
+
+        def _write_backend_metadata(ndone):
+            if not backend_meta_path:
+                return
+            payload = {
+                'param_names': list(self.mcmc_param_names),
+                'nwalkers': nwalkers,
+                'ndim': ndim,
+                'nburn': nburn,
+                'nsteps_target': nsteps,
+                'steps_written': int(ndone),
+                'likelihood_mode': self._mcmc_likelihood_mode(),
+            }
+            tmp = backend_meta_path + '.tmp'
+            try:
+                with open(tmp, 'w') as stream:
+                    json.dump(payload, stream, indent=2)
+                os.replace(tmp, backend_meta_path)
+            except Exception as exc:              # metadata is helpful, not fatal
+                LOG.warning(f'[MCMC] backend metadata write failed at step {ndone}: {exc}')
+
         def _checkpoint(sampler, ndone):
+            if backend is not None:
+                _write_backend_metadata(ndone)
+                LOG.info(f'[MCMC] resumable backend at step {ndone} -> {backend_path}')
+                return
             if not ckpt:
                 return
             try:
+                chain_to_save = sampler.get_chain()
+                log_prob_to_save = sampler.get_log_prob()
+                if resume_chain is not None:
+                    if chain_to_save.shape[0]:
+                        chain_to_save = np.concatenate((resume_chain, chain_to_save), axis=0)
+                        log_prob_to_save = np.concatenate((resume_log_prob, log_prob_to_save), axis=0)
+                    else:
+                        chain_to_save = resume_chain
+                        log_prob_to_save = resume_log_prob
                 np.savez_compressed(
                     ckpt + '.tmp.npz',
-                    chain=sampler.get_chain(), log_prob=sampler.get_log_prob(),
+                    chain=chain_to_save, log_prob=log_prob_to_save,
                     param_names=np.array(self.mcmc_param_names, dtype=object),
                     nburn=nburn, nsteps_done=ndone,
                     acceptance_fraction=sampler.acceptance_fraction,
@@ -928,27 +1141,57 @@ class BaseFitter(ABC):
             except Exception as exc:              # never let a bad write kill the chain
                 LOG.warning(f'[MCMC] checkpoint failed at step {ndone}: {exc}')
 
-        ndone = 0
+        if backend is not None:
+            _write_backend_metadata(start_step)
+
+        ndone = start_step
+        remaining = max(0, nburn + nsteps - start_step)
         try:
-            for i, state in enumerate(sampler.sample(p0, iterations=nburn+nsteps, progress=False)):
-                ndone = i + 1
-                if i == 0 or ndone % cadence == 0:
-                    LOG.info(
-                        f'MCMC step {ndone}/{nburn+nsteps}, '
-                        f'acc={np.mean(sampler.acceptance_fraction):.3f}, '
-                        f'max lnP={np.max(state.log_prob):.6g}'
-                    )
-                if ckpt and ndone % ckpt_every == 0:
-                    _checkpoint(sampler, ndone)
+            if remaining:
+                initial_state = resume_state if resume_state is not None else p0
+                for i, state in enumerate(sampler.sample(initial_state, iterations=remaining, progress=False)):
+                    ndone = start_step + i + 1
+                    step_in_run = i + 1
+                    if step_in_run == 1 or ndone % cadence == 0:
+                        LOG.info(
+                            f'MCMC step {ndone}/{nburn+nsteps}, '
+                            f'acc={np.mean(sampler.acceptance_fraction):.3f}, '
+                            f'max lnP={np.max(state.log_prob):.6g}'
+                        )
+                    if (ckpt or backend is not None) and ndone % ckpt_every == 0:
+                        _checkpoint(sampler, ndone)
+            else:
+                LOG.info(f'[MCMC] target of {nburn+nsteps} steps already exists; no sampling needed')
         except KeyboardInterrupt:
             LOG.info(f'KeyboardInterrupt, stopping MCMC at step {ndone}')
+            _checkpoint(sampler, ndone)
+
+        if backend is not None and ndone:
             _checkpoint(sampler, ndone)
 
         self.mcmc_sampler = sampler
         self.mcmc_nburn = int(min(nburn, max(0, ndone - 1)))
         self.mcmc_theta0 = theta0
-        self.mcmc_chain = sampler.get_chain(discard=self.mcmc_nburn, flat=True)
-        self.mcmc_log_prob = sampler.get_log_prob(discard=self.mcmc_nburn, flat=True)
+        # A completed NPZ checkpoint has all samples on disk but no samples in
+        # this newly-created in-memory sampler. Do not query emcee in that case:
+        # its empty backend raises "run the sampler with store == True".
+        if sampler.iteration:
+            raw_chain = sampler.get_chain()
+            raw_log_prob = sampler.get_log_prob()
+        else:
+            raw_chain = np.empty((0, nwalkers, ndim), dtype=float)
+            raw_log_prob = np.empty((0, nwalkers), dtype=float)
+        if resume_chain is not None:
+            if raw_chain.shape[0]:
+                raw_chain = np.concatenate((resume_chain, raw_chain), axis=0)
+                raw_log_prob = np.concatenate((resume_log_prob, raw_log_prob), axis=0)
+            else:
+                raw_chain = resume_chain
+                raw_log_prob = resume_log_prob
+        self._mcmc_raw_chain = raw_chain
+        self._mcmc_raw_log_prob = raw_log_prob
+        self.mcmc_chain = raw_chain[self.mcmc_nburn:].reshape(-1, ndim)
+        self.mcmc_log_prob = raw_log_prob[self.mcmc_nburn:].reshape(-1)
         LOG.info(
             f'[MCMC] done: {ndone} steps, {self.mcmc_chain.shape[0]} post-burn-in samples, '
             f'acc={np.mean(sampler.acceptance_fraction):.3f}'
@@ -981,7 +1224,10 @@ class BaseFitter(ABC):
         '''Convergence diagnostics for the last fit_MCMC run.'''
         emcee = _import_emcee()
         sampler = self.mcmc_sampler
-        chain = sampler.get_chain(discard=self.mcmc_nburn)       # (nsteps, nwalkers, ndim)
+        chain = getattr(self, '_mcmc_raw_chain', None)
+        if chain is None:
+            chain = sampler.get_chain()
+        chain = chain[self.mcmc_nburn:]                           # (nsteps, nwalkers, ndim)
         nsteps = chain.shape[0]
         acc = sampler.acceptance_fraction
         try:
@@ -989,6 +1235,9 @@ class BaseFitter(ABC):
         except Exception as exc:
             LOG.warning(f'[MCMC] autocorrelation estimate failed: {exc}')
             tau = np.full(chain.shape[2], np.nan)
+        raw_log_prob = getattr(self, '_mcmc_raw_log_prob', None)
+        if raw_log_prob is None:
+            raw_log_prob = sampler.get_log_prob()
         # NOTE: no R-hat here. emcee is an ENSEMBLE sampler -- walkers propose
         # from one another, so they are not independent chains and Gelman-Rubin
         # comes out optimistic by construction. tau and n_steps/tau below are the
@@ -1008,7 +1257,7 @@ class BaseFitter(ABC):
                          / (np.std(chain[:, :, j]) + 1e-30))
                 for j, n in enumerate(self.mcmc_param_names)
             },
-            'frac_neg_inf': float(np.mean(~np.isfinite(sampler.get_log_prob(discard=self.mcmc_nburn)))),
+            'frac_neg_inf': float(np.mean(~np.isfinite(raw_log_prob[self.mcmc_nburn:]))),
         }
 
     def set_params_to_mcmc(self, mode='map'):
@@ -1045,13 +1294,20 @@ class BaseFitter(ABC):
         npz rather than emcee's HDF5Backend: h5py is not a DINGO dependency.
         '''
         sampler = self.mcmc_sampler
+        chain = getattr(self, '_mcmc_raw_chain', None)
+        log_prob = getattr(self, '_mcmc_raw_log_prob', None)
+        if chain is None:
+            chain = sampler.get_chain()
+        if log_prob is None:
+            log_prob = sampler.get_log_prob()
         data = {
-            'chain': sampler.get_chain(),               # (nsteps, nwalkers, ndim)
-            'log_prob': sampler.get_log_prob(),
+            'chain': chain,                             # (nsteps, nwalkers, ndim)
+            'log_prob': log_prob,
             'param_names': np.array(self.mcmc_param_names, dtype=object),
             'nburn': self.mcmc_nburn,
             'acceptance_fraction': sampler.acceptance_fraction,
             'theta0': self.mcmc_theta0,
+            'likelihood_mode': self._mcmc_likelihood_mode(),
             'config_path': str(self.config_path),
             'name': str(self.name),
         }
@@ -1277,11 +1533,78 @@ class KinematicsFitter(BaseFitter):
     @property
     def mcmc_extra_param_names(self):
         nc = (self.config.get('mcmc') or {}).get('noise') or {}
+        if self._mcmc_likelihood_mode() == 'adam':
+            # A free scale changes the objective from SSE to
+            # SSE/var + N*log(var), so it is deliberately not part of the
+            # Adam-compatible target. The scale is fixed from the noise block.
+            return ()
         return ('noise.ln_f',) if nc.get('fit_ln_f', True) else ()
+
+    def _mcmc_likelihood_mode(self):
+        '''Return the configured likelihood mode in its canonical spelling.'''
+        mode = str((self.config.get('mcmc') or {}).get('likelihood', 'gaussian')).lower()
+        aliases = {
+            'adam_loss': 'adam',
+            'adam-compatible': 'adam',
+            'adam_compatible': 'adam',
+        }
+        mode = aliases.get(mode, mode)
+        if mode not in {'gaussian', 'adam'}:
+            raise ValueError(
+                f'unknown mcmc.likelihood={mode!r}; choose `gaussian` or `adam`')
+        return mode
 
     def _mcmc_prepare(self):
         if self.mcmc_mask is None:
-            self.setup_noise_model()
+            if self._mcmc_likelihood_mode() == 'adam':
+                self.setup_adam_compatible_noise_model()
+            else:
+                self.setup_noise_model()
+
+    def setup_adam_compatible_noise_model(self, sigma_R=None, sigma_C=None):
+        '''Prepare a fixed-noise likelihood with exactly Adam's pixel objective.
+
+        Adam minimises the unweighted, full-image residual
+
+            sum((image_R - image_C)**2).
+
+        This mode keeps every output pixel, uses a fixed variance only to put
+        the SSE on a log-probability scale, and does not fit ``noise.ln_f``.
+        The fixed-point iteration remains cold-started and deterministic during
+        MCMC, which is necessary for a valid likelihood but does not change the
+        model being fitted.
+        '''
+        nc = (self.config.get('mcmc') or {}).get('noise') or {}
+        if nc.get('fit_ln_f', False):
+            raise ValueError(
+                'mcmc.likelihood=adam requires mcmc.noise.fit_ln_f=false; '
+                'a free noise scale would no longer have Adam\'s SSE objective.')
+        if sigma_R is None:
+            sigma_R = nc.get('sigma_R')
+        if sigma_C is None:
+            sigma_C = nc.get('sigma_C')
+        self.sigma_R = float(sigma_R) if sigma_R is not None \
+            else estimate_background_sigma(self.true_grism_R)
+        self.sigma_C = float(sigma_C) if sigma_C is not None \
+            else estimate_background_sigma(self.true_grism_C)
+        self.mcmc_corr_area = float(nc.get('corr_area', 1.0))
+        self.mcmc_var_base = (self.sigma_R**2 + self.sigma_C**2)*self.mcmc_corr_area
+
+        self._reset_state()
+        with torch.no_grad():
+            self.loss()  # initialise the same forward model Adam uses
+        self.mcmc_mask = torch.ones_like(self.image_R, dtype=torch.bool)
+        self.n_mcmc_pix = int(self.mcmc_mask.numel())
+        self.mcmc_cov_R = torch.ones_like(self.image_R)
+        self.mcmc_cov_C = torch.ones_like(self.image_C)
+        self.mcmc_foot_R = self._cutout_footprint(self.x_R, self.y_R, self.cutout_R)
+        self.mcmc_foot_C = self._cutout_footprint(self.x_C, self.y_C, self.cutout_C)
+        self.mcmc_flux_masked_out = 0.0
+        LOG.info(
+            f'[MCMC] Adam-compatible likelihood: full SSE, '
+            f'sigma_R={self.sigma_R:.5g} sigma_C={self.sigma_C:.5g} '
+            f'var_base={self.mcmc_var_base:.5g} N_pix={self.n_mcmc_pix}')
+        return self.mcmc_mask
 
     def setup_noise_model(self, sigma_R=None, sigma_C=None,
                           cov_threshold=0.25, extra_mask=None):
