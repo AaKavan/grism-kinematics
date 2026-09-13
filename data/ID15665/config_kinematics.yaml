@@ -29,19 +29,14 @@ image:
     dx: 0
     dy: 0
 
-# Starting values taken verbatim from Archive_6/1-fit-kinematics.ipynb, which is
-# the fit this galaxy's published result comes from. Measured: this start reaches
-# loss() = 0.097895; the sign-hint start (V_rot=-300, R_v=2, inc_v=1.2) converges
-# to a worse local minimum at 0.099337, and (+300, 2, 1.2) collapses to face-on at
-# 0.3097. The loss surface is multimodal -- do not "tidy" these.
 velocity:
   model: arctan
-  V_rot: 500.0
-  R_v: 3
+  V_rot: -300.0
+  R_v: 2
   x0_v: 40.0
-  y0_v: 40
+  y0_v: 40.0
   theta_v: 0
-  inc_v: 1.0
+  inc_v: 1.2
 
 # ----------------------------------------------------------------------------
 # Fitting strategy (also defines the free-parameter set that fit_MCMC samples)
@@ -90,20 +85,15 @@ mcmc:
   # Stage 1 (index 0): stage 2 freezes theta_v for the polish, so sampling there
   # would silently drop it from the free set.
   stage: 0
-  # Use the same full-image SSE as Adam; the fixed noise scale only converts SSE
-  # to log probability. The R-C offset parameterization is intentionally unchanged.
   likelihood: adam
-  # Fresh restart: initialize near the Adam solution, while retaining broad priors.
   init: adam
   nwalkers: 32
-  nsteps: 12000
-  nburn: 3000
-  # Adam allows 50 fixed-point iterations; use the same budget during sampling.
-  xy_iters: 50
+  nsteps: 8000
+  nburn: 2000
+  xy_iters: 40
   xy_tol: 5e-3
   log_cadence: 200
   seed: 42
-  # Dependency-free live, resumable chain; save_mcmc() also exports a flat .npz.
   checkpoint: ../results/ID15665/ID15665_chain_broad_adam_checkpoint.npz
   resume: true
   checkpoint_every: 500
@@ -124,15 +114,21 @@ mcmc:
     image.C.dy:      0.02
 
   priors:
-    # Broad but proper bounds. V_rot is one-signed, so theta spans both senses.
+    # one-signed: (V_rot, theta_v) and (-V_rot, theta_v+pi) give an identical vz field
     velocity.V_rot:   {type: uniform,     min: 0.0,    max: 2500.0}
-    # Positive lower bound keeps the damped fixed-point iteration stable.
+    # lower bound keeps the damped fixed-point iteration contracting
     velocity.R_v:     {type: log_uniform, min: 0.5,    max: 100.0}
-    velocity.x0_v:    {type: uniform,     min: -20.0,  max: 100.0}
-    velocity.y0_v:    {type: uniform,     min: -20.0,  max: 100.0}
-    velocity.theta_v: {type: uniform,     min: 0.0,    max: 6.28318531}
-    # Isotropic orientation prior, with small endpoint exclusions for numerical stability.
-    velocity.inc_v:   {type: sin_i,       min: 0.02,   max: 1.5508}
+    # Centred on the cutout with a width that still admits an off-centre source:
+    # ID6170's centre fits at y0 = 54.9, which a +-10 px window would exclude and
+    # then fail at walker initialisation.
+    velocity.x0_v:    {type: uniform,     min: 10.0, max: 70.0}
+    velocity.y0_v:    {type: uniform,     min: 10.0, max: 70.0}
+    velocity.theta_v: {type: uniform,     min: 0.0,    max: 6.283185}
+    # No photometric measurement supplied. sin_i is the isotropic-orientation
+    # prior; it does NOT break the V_rot--inc_v degeneracy (corr ~ -0.99), so
+    # V_rot alone will be poorly constrained. Pass inc_mu/inc_sigma, or let the
+    # notebook overwrite this from its pysersic fit.
+    velocity.inc_v:   {type: sin_i,   min: 0.0873, max: 1.4835}
     image.R.dx:       {type: uniform,     min: -10.0,  max: 10.0}
     image.R.dy:       {type: uniform,     min: -10.0,  max: 10.0}
     image.C.dx:       {type: uniform,     min: -10.0,  max: 10.0}
