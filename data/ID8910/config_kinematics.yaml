@@ -52,8 +52,17 @@ fitting:
       max: 1e10
       fit: true
     override:
-      image.R.dx, image.R.dy, image.C.dx, image.C.dy:
+      image.R.dx, image.R.dy:
         lr: 0.5
+      # The C-grism offsets are FIXED. Shifting both grisms by the same amount
+      # and moving (x0_v, y0_v) by the same amount translates the rectified
+      # images together and leaves R-C unchanged, so (dx_R, dx_C, x0_v) and
+      # (dy_R, dy_C, y0_v) each contain an exactly flat direction (the K=20
+      # ensemble measured the common mode floating by ~1 px while R-C was pinned
+      # to 0.09 px). Fixing C removes it: the R offsets carry the relative
+      # registration and (x0_v, y0_v) the absolute one, in the C frame.
+      image.C.dx, image.C.dy:
+        fit: false
       velocity.theta_v:
         fit: true
       # R_v is a turnover RADIUS: without this floor Adam happily returns a
@@ -76,6 +85,8 @@ fitting:
     override:
       velocity.theta_v:
         fit: false
+      image.C.dx, image.C.dy:
+        fit: false
 
 # ----------------------------------------------------------------------------
 # MCMC posterior sampling (read only by fit_MCMC)
@@ -85,7 +96,12 @@ mcmc:
   # Stage 1 (index 0): stage 2 freezes theta_v for the polish, so sampling there
   # would silently drop it from the free set.
   stage: 0
-  likelihood: adam
+  # `gaussian`: per-pixel variance and effective pixel count derived from the
+  # rectification operator itself (see KinematicsFitter.setup_noise_model), with
+  # a fitted noise scale ln_f as a check. `adam` reproduces the optimizer's
+  # unweighted SSE with a flat fixed variance; its temperature is off by the
+  # mean sum of squared bilinear weights (~0.44), and is kept only for comparison.
+  likelihood: gaussian
   init: adam
   nwalkers: 32
   nsteps: 8000
@@ -94,12 +110,13 @@ mcmc:
   xy_tol: 5e-3
   log_cadence: 200
   seed: 42
-  checkpoint: ../results/ID8910/ID8910_chain_broad_adam_checkpoint.npz
+  checkpoint: ../results/ID8910/ID8910_chain_checkpoint.npz
   resume: true
   checkpoint_every: 500
 
   noise:
-    fit_ln_f: false
+    fit_ln_f: true
+    corr_area: auto
 
   init_scatter:
     velocity.V_rot:  2.0
@@ -110,14 +127,16 @@ mcmc:
     velocity.inc_v:  0.01
     image.R.dx:      0.02
     image.R.dy:      0.02
-    image.C.dx:      0.02
-    image.C.dy:      0.02
+    noise.ln_f:      0.05
 
   priors:
     # one-signed: (V_rot, theta_v) and (-V_rot, theta_v+pi) give an identical vz field
     velocity.V_rot:   {type: uniform,     min: 0.0,    max: 2500.0}
-    # lower bound keeps the damped fixed-point iteration contracting
-    velocity.R_v:     {type: log_uniform, min: 0.5,    max: 100.0}
+    # lower bound keeps the damped fixed-point iteration contracting; the upper
+    # bound is the cutout radius: beyond it the arctangent is a solid-body field
+    # of vanishing amplitude, i.e. a no-rotation model that the sampler can hide
+    # in (the ID6084 chain did, at R_v -> 100 on a 41 px cutout).
+    velocity.R_v:     {type: log_uniform, min: 0.5,    max: 40.0}
     # Centred on the cutout with a width that still admits an off-centre source:
     # ID6170's centre fits at y0 = 54.9, which a +-10 px window would exclude and
     # then fail at walker initialisation.
@@ -131,5 +150,4 @@ mcmc:
     velocity.inc_v:   {type: sin_i,   min: 0.0873, max: 1.4835}
     image.R.dx:       {type: uniform,     min: -10.0,  max: 10.0}
     image.R.dy:       {type: uniform,     min: -10.0,  max: 10.0}
-    image.C.dx:       {type: uniform,     min: -10.0,  max: 10.0}
-    image.C.dy:       {type: uniform,     min: -10.0,  max: 10.0}
+    noise.ln_f:       {type: uniform,     min: -1.5,   max: 1.5}

@@ -246,7 +246,7 @@ def collect_free_scalar_params(cfgs: Dict[str, FitParamConfig]):
     Keeps only *scalar* fittable tensors. Dropped, each with a log line:
       - cfg.fit is False
       - cfg.tensor is not a Tensor (e.g. 'image.R.forward_model' holds a callable)
-      - cfg.tensor.numel() != 1 (e.g. 'result.emline_model' is 81x81)
+      - cfg.tensor.numel() != 1 (e.g. 'result.emline_model' is an image array)
     Aliased keys share one FitParamConfig, hence one tensor, so they collapse onto
     their first occurrence -- deduplicated by id(cfg.tensor) exactly as
     `_extract_tensors` does. Writing the shared tensor keeps every alias consistent.
@@ -300,6 +300,37 @@ def estimate_background_sigma(image, source_mask=None, sigma=3.0, maxiters=10):
         good &= ~np.asarray(source_mask, dtype=bool)
     _, _, std = sigma_clipped_stats(image[good], sigma=sigma, maxiters=maxiters)
     return float(std)
+
+def bilinear_scatter_sq_weights(xg, yg, values, cutout):
+    '''
+    Companion to kinematics.bilinear_interpolte_intensity_torch that scatters
+    `values` with the SQUARED bilinear weights.
+
+    The rectified image is linear in the grism data, image_i = sum_k w_ik d_k,
+    so for independent input pixels of variance `values` this returns the exact
+    per-pixel variance of the rectified image, Var(image_i) = sum_k w_ik^2 v_k.
+    Same loop structure and edge handling as the original so the two stay
+    pixel-for-pixel consistent.
+    '''
+    device = values.device
+    x0, y0, w, h = cutout
+    H, W = h, w
+    image = torch.zeros(h, w, device=device)
+    xg_cut = xg - x0
+    yg_cut = yg - y0
+    xf = torch.floor(xg_cut).long()
+    yf = torch.floor(yg_cut).long()
+    dx = xg_cut - xf.float()
+    dy = yg_cut - yf.float()
+    for i in range(2):
+        for j in range(2):
+            wt = ((1 - dx) if i == 0 else dx) * ((1 - dy) if j == 0 else dy)
+            xi = xf + i
+            yj = yf + j
+            valid = (xi >= 0) & (xi < W) & (yj >= 0) & (yj < H)
+            image.index_put_((yj[valid], xi[valid]), values[valid]*wt[valid]**2,
+                             accumulate=True)
+    return image
 
 #%% --------------------------------------------------------------------------
 # generic base class for all fitters
@@ -681,7 +712,12 @@ class BaseFitter(ABC):
             priors.append((name, s))
         for name in self.mcmc_extra_param_names:
             priors.append((name, dict(spec.get(name, {'type': 'uniform', 'min': -3.0, 'max': 3.0}))))
+        self._check_mcmc_priors(priors)
         return priors
+
+    def _check_mcmc_priors(self, priors):
+        '''Hook for subclasses to sanity-check the prior support. No-op here.'''
+        pass
 
     def log_prior(self, theta):
         '''
@@ -826,7 +862,7 @@ class BaseFitter(ABC):
         self._mcmc_priors = self._build_mcmc_priors()
         ndim = len(self.mcmc_param_names)
 
-        nwalkers = int(nwalkers if nwalkers is not None else mc.get('nwalkers', max(32, 2*ndim+2)))
+        nwalkers = int(nwalkers if nwalkers is not None else mc.get('nwalkers', max(32, 4*ndim)))
         nsteps = int(nsteps if nsteps is not None else mc.get('nsteps', 8000))
         nburn = int(nburn if nburn is not None else mc.get('nburn', 2000))
         cadence = int(mc.get('log_cadence', 200))
@@ -1144,22 +1180,72 @@ class BaseFitter(ABC):
         if backend is not None:
             _write_backend_metadata(start_step)
 
+        # Stuck walkers. The registration offsets alias at whole pixels, so a
+        # walker can sit in a local mode ~1 px away whose lnP is tens to hundreds
+        # below the ensemble's. DE moves do eventually pull it across, but until
+        # then it contaminates every marginal (ID15665: 15/40 walkers 108 in lnP
+        # below the rest after a 300-step burn-in). At the end of burn-in, walkers
+        # more than `stuck_dlnp` below the ensemble median are re-seeded as
+        # jittered copies of randomly chosen healthy walkers. This is the usual
+        # burn-in-then-reinitialise practice and touches nothing after burn-in.
+        reseed = bool(mc.get('reseed_stuck', True))
+        stuck_dlnp = float(mc.get('stuck_dlnp', 30.0))
+
+        def _reseed_stuck(state):
+            lnp = np.asarray(state.log_prob)
+            med = np.median(lnp)
+            bad = np.where(~np.isfinite(lnp) | (lnp < med - stuck_dlnp))[0]
+            if len(bad) == 0:
+                LOG.info(f'[MCMC] end of burn-in: no stuck walkers (lnP spread '
+                         f'{np.max(lnp) - np.min(lnp):.1f})')
+                return state
+            good = np.where(np.isfinite(lnp) & (lnp >= med - stuck_dlnp))[0]
+            if len(good) < max(2, nwalkers//4):
+                LOG.warning(f'[MCMC] {len(bad)}/{nwalkers} walkers are stuck but too few '
+                            f'healthy ones to re-seed from; leaving the ensemble alone')
+                return state
+            coords = np.array(state.coords, copy=True)
+            new_lnp = np.array(lnp, copy=True)
+            spread = np.std(coords[good], axis=0) + 1e-9
+            for j in bad:
+                for _ in range(1000):
+                    cand = coords[rng.choice(good)] + 0.1*spread*rng.standard_normal(ndim)
+                    lp_c = self.log_probability(cand)
+                    if np.isfinite(lp_c):
+                        coords[j], new_lnp[j] = cand, lp_c
+                        break
+            LOG.warning(
+                f'[MCMC] re-seeded {len(bad)}/{nwalkers} stuck walkers at the end of '
+                f'burn-in (lnP more than {stuck_dlnp:.0f} below the median {med:.1f}; '
+                f'worst {np.min(lnp):.1f}). Their burn-in samples are discarded anyway.')
+            return emcee.State(coords, log_prob=new_lnp, random_state=state.random_state)
+
         ndone = start_step
         remaining = max(0, nburn + nsteps - start_step)
         try:
             if remaining:
                 initial_state = resume_state if resume_state is not None else p0
-                for i, state in enumerate(sampler.sample(initial_state, iterations=remaining, progress=False)):
-                    ndone = start_step + i + 1
-                    step_in_run = i + 1
-                    if step_in_run == 1 or ndone % cadence == 0:
-                        LOG.info(
-                            f'MCMC step {ndone}/{nburn+nsteps}, '
-                            f'acc={np.mean(sampler.acceptance_fraction):.3f}, '
-                            f'max lnP={np.max(state.log_prob):.6g}'
-                        )
-                    if (ckpt or backend is not None) and ndone % ckpt_every == 0:
-                        _checkpoint(sampler, ndone)
+                # burn-in segment (only the part of it that falls in this run),
+                # then the production segment; the walker state is carried across
+                # and the backend/chain storage is continuous.
+                seg_burn = max(0, min(remaining, nburn - start_step))
+                segments = [(seg_burn, True), (remaining - seg_burn, False)]
+                state = initial_state
+                for niter, is_burn in segments:
+                    if niter <= 0:
+                        continue
+                    for i, state in enumerate(sampler.sample(state, iterations=niter, progress=False)):
+                        ndone += 1
+                        if ndone == start_step + 1 or ndone % cadence == 0:
+                            LOG.info(
+                                f'MCMC step {ndone}/{nburn+nsteps}, '
+                                f'acc={np.mean(sampler.acceptance_fraction):.3f}, '
+                                f'max lnP={np.max(state.log_prob):.6g}'
+                            )
+                        if (ckpt or backend is not None) and ndone % ckpt_every == 0:
+                            _checkpoint(sampler, ndone)
+                    if is_burn and reseed:
+                        state = _reseed_stuck(state)
             else:
                 LOG.info(f'[MCMC] target of {nburn+nsteps} steps already exists; no sampling needed')
         except KeyboardInterrupt:
@@ -1395,7 +1481,10 @@ class KinematicsFitter(BaseFitter):
 
         self.model_cfg = {'result.emline_model': FitParamConfig(
             name='result.emline_model',
-            value = np.ones((81, 81))/np.sum(self.true_grism_R.cpu().numpy()),
+            # Keep this diagnostic image parameter aligned with the staged input
+            # cutout. Older runs used a hard-coded 81x81 Pa-alpha cutout, but
+            # compact H-alpha runs may use 41x41 (r_fit=20).
+            value = np.ones_like(self.true_grism_R.cpu().numpy()) / np.sum(self.true_grism_R.cpu().numpy()),
             lr = 0.05,
             min=0, 
             max=1e10, 
@@ -1587,7 +1676,8 @@ class KinematicsFitter(BaseFitter):
             else estimate_background_sigma(self.true_grism_R)
         self.sigma_C = float(sigma_C) if sigma_C is not None \
             else estimate_background_sigma(self.true_grism_C)
-        self.mcmc_corr_area = float(nc.get('corr_area', 1.0))
+        corr_cfg = nc.get('corr_area', 1.0)
+        self.mcmc_corr_area = 1.0 if isinstance(corr_cfg, str) else float(corr_cfg)
         self.mcmc_var_base = (self.sigma_R**2 + self.sigma_C**2)*self.mcmc_corr_area
 
         self._reset_state()
@@ -1597,6 +1687,12 @@ class KinematicsFitter(BaseFitter):
         self.n_mcmc_pix = int(self.mcmc_mask.numel())
         self.mcmc_cov_R = torch.ones_like(self.image_R)
         self.mcmc_cov_C = torch.ones_like(self.image_C)
+        # unified likelihood interface (see setup_noise_model): a flat variance
+        # map, no tempering, and the constant normalisation term
+        self.mcmc_var_map = torch.full_like(self.image_R, self.mcmc_var_base)
+        self.mcmc_n_eff = float(self.n_mcmc_pix)
+        self.mcmc_temper = 1.0
+        self._mcmc_lnvar_const = self.n_mcmc_pix*np.log(2.0*np.pi*self.mcmc_var_base)
         self.mcmc_foot_R = self._cutout_footprint(self.x_R, self.y_R, self.cutout_R)
         self.mcmc_foot_C = self._cutout_footprint(self.x_C, self.y_C, self.cutout_C)
         self.mcmc_flux_masked_out = 0.0
@@ -1609,35 +1705,46 @@ class KinematicsFitter(BaseFitter):
     def setup_noise_model(self, sigma_R=None, sigma_C=None,
                           cov_threshold=0.25, extra_mask=None):
         '''
-        Freeze the noise model, the pixel mask and the input footprint. Call once,
-        at the MAP parameters, before sampling (fit_MCMC does it automatically).
+        Freeze the noise model, the pixel mask and the input footprint at the
+        current (MAP) parameters. fit_MCMC calls it automatically.
 
-        The mask is deliberately INDEPENDENT of the parameters. If it moved with
-        theta then both N and the ln(2*pi*sigma^2) term would move with theta, the
-        noise scale would stop being identifiable, and the sampler would be
-        rewarded for shrinking the mask. Making it a fixed function of the data
-        and of the MAP is legitimate; recomputing it during sampling is not.
+        Everything frozen here is a fixed function of the data and of the MAP,
+        never of the sampled theta: a mask or variance that moved with theta
+        would let the sampler score by reshaping the noise model instead of by
+        fitting the data.
 
-        The mask drops pixels that the bilinear remapping never reaches, measured
-        by scattering an image of ones through the same transform.
+        The rectified image is LINEAR in the grism data -- each output pixel is
+        a bilinear-weighted sum of input pixels, image_i = sum_k w_ik d_k -- so
+        for independent input pixels of variance sigma^2, exactly,
 
-        cov_threshold is 0.25, NOT ~1. `bilinear_interpolte_intensity_torch`
-        SCATTERS, so the coverage map is the Jacobian of the remapping, not an
-        occupancy fraction: it is < 1 wherever the transform stretches and > 1
-        wherever it compresses. The Doppler term stretches one grism and
-        compresses the other exactly where the velocity gradient is steepest --
-        i.e. across the galaxy centre, where cov_R ~ 0.76 while cov_C ~ 1.26. A
-        threshold near 1 therefore deletes the core: at 0.9 this cut 85% of the
-        pixels within r < 6 px, 40% of the total flux and 128 of the 200
-        brightest pixels, which is most of the kinematic signal. The genuinely
-        unreached pixels sit at exactly 0 (235 of them here), so any threshold
-        between ~0.05 and ~0.5 separates them cleanly; 0.25 keeps 100% of the
-        core and 98.4% of the flux.
+            Var(image_i)             = sigma^2 * sum_k w_ik^2      (sqw map)
+            sum_j Cov(image_i, image_j) = sigma^2 * sum_k w_ik     (coverage map)
 
-        Note the variance is still treated as uniform across the mask even though
-        coverage varies by ~2x over it, so pixels differ in how many input pixels
-        were averaged into them. That is an approximation the fitted ln_f absorbs
-        only in the mean.
+        Hence the per-pixel variance of the R-minus-C residual is
+        sigma_R^2*sqw_R + sigma_C^2*sqw_C, and the number of output pixels each
+        one is correlated with (its correlation area) is coverage/sqw. For a
+        uniform sub-pixel phase the expectations are sum w^2 = (2/3)^2 = 0.444
+        and area = 2.25. That is why a likelihood using sigma_R^2 + sigma_C^2 per
+        pixel measured chi2/N = 0.44 on ID15665, and why its widths nevertheless
+        came out about right in the ensemble test: the 2.25x variance
+        overestimate and the 2.25x overcount of independent pixels cancelled.
+        Here both come from the operator, so neither is assumed:
+
+            ln L = (N_eff/N) * [ -0.5*sum r^2/v  -  0.5*sum ln(2 pi v) ],
+            N_eff = sum_i 1/area_i over the mask.
+
+        `mcmc.noise.corr_area` may still be a number to override the
+        operator-derived area (N_eff = N/corr_area); the default 'auto' uses the
+        operator. A fitted ln_f then rescales v, and with the variance right it
+        should come out near 0 -- so it doubles as a check of sigma_R/sigma_C.
+
+        cov_threshold is 0.25, NOT ~1. The coverage map is the Jacobian of the
+        remapping, not an occupancy fraction: < 1 where the transform stretches,
+        > 1 where it compresses, and the Doppler term stretches one grism and
+        compresses the other exactly across the galaxy centre. A threshold near
+        1 therefore deletes the core (at 0.9: 85% of the pixels within r < 6 px
+        and 40% of the flux). The genuinely unreached pixels sit at exactly 0,
+        so any threshold between ~0.05 and ~0.5 separates them cleanly.
         '''
         nc = (self.config.get('mcmc') or {}).get('noise') or {}
         if sigma_R is None:
@@ -1648,10 +1755,6 @@ class KinematicsFitter(BaseFitter):
             else estimate_background_sigma(self.true_grism_R)
         self.sigma_C = float(sigma_C) if sigma_C is not None \
             else estimate_background_sigma(self.true_grism_C)
-        # corr_area inflates the variance for correlated noise. It is 100%
-        # degenerate with a fitted ln_f, so set one or the other, never both.
-        self.mcmc_corr_area = float(nc.get('corr_area', 1.0))
-        self.mcmc_var_base = (self.sigma_R**2 + self.sigma_C**2)*self.mcmc_corr_area
 
         self._reset_state()
         with torch.no_grad():
@@ -1661,13 +1764,35 @@ class KinematicsFitter(BaseFitter):
                 self.x_R, self.y_R, ones, self.cutout_R)
             cov_C = kinematics.bilinear_interpolte_intensity_torch(
                 self.x_C, self.y_C, ones, self.cutout_C)
-        mask = (cov_R > cov_threshold) & (cov_C > cov_threshold)
+            sqw_R = bilinear_scatter_sq_weights(self.x_R, self.y_R, ones, self.cutout_R)
+            sqw_C = bilinear_scatter_sq_weights(self.x_C, self.y_C, ones, self.cutout_C)
+        var_map = self.sigma_R**2*sqw_R + self.sigma_C**2*sqw_C
+        mask = (cov_R > cov_threshold) & (cov_C > cov_threshold) & (var_map > 0)
         if extra_mask is not None:
             mask = mask & extra_mask.to(mask.device)
-        self.mcmc_cov_R = cov_R
-        self.mcmc_cov_C = cov_C
+        n_pix = int(mask.sum())
+
+        # correlation area per output pixel = sum_j Cov_ij / Cov_ii
+        corr_num = self.sigma_R**2*cov_R + self.sigma_C**2*cov_C
+        area = torch.where(mask, corr_num/var_map.clamp_min(1e-30), torch.ones_like(var_map))
+        corr_cfg = nc.get('corr_area', 'auto')
+        if isinstance(corr_cfg, str) and corr_cfg.lower() == 'auto':
+            n_eff = float(torch.sum(1.0/area[mask]))
+            self.mcmc_corr_area = n_pix/n_eff
+        else:
+            self.mcmc_corr_area = float(corr_cfg)
+            n_eff = n_pix/self.mcmc_corr_area
+
+        self.mcmc_cov_R, self.mcmc_cov_C = cov_R, cov_C
+        self.mcmc_sqw_R, self.mcmc_sqw_C = sqw_R, sqw_C
+        self.mcmc_corr_area_map = area
         self.mcmc_mask = mask
-        self.n_mcmc_pix = int(mask.sum())
+        self.mcmc_var_map = var_map
+        self.mcmc_var_base = float(var_map[mask].mean())   # mean variance; kept for plots/scripts
+        self.n_mcmc_pix = n_pix
+        self.mcmc_n_eff = n_eff
+        self.mcmc_temper = n_eff/n_pix
+        self._mcmc_lnvar_const = float(torch.sum(torch.log(2.0*np.pi*var_map[mask])))
 
         # Input-space footprint: the grism pixels whose rectified position lands
         # inside the output cutout, i.e. exactly the pixels the scatter keeps.
@@ -1683,11 +1808,14 @@ class KinematicsFitter(BaseFitter):
         with torch.no_grad():
             flux = torch.abs(self.image_R)
             frac_out = float(flux[~mask].sum()/flux.sum()) if float(flux.sum()) > 0 else 0.0
+            chi2 = float(torch.sum(((self.image_R - self.image_C)[mask])**2/var_map[mask]))
         self.mcmc_flux_masked_out = frac_out
         LOG.info(
             f'[MCMC] noise model frozen: sigma_R={self.sigma_R:.5g} sigma_C={self.sigma_C:.5g} '
-            f'var_base={self.mcmc_var_base:.5g} N_pix={self.n_mcmc_pix}/{mask.numel()} '
-            f'(mask drops {100*frac_out:.1f}% of the flux)'
+            f'mean var={self.mcmc_var_base:.5g} (mean sum w^2: R {float(sqw_R[mask].mean()):.3f}, '
+            f'C {float(sqw_C[mask].mean()):.3f}) N_pix={n_pix}/{mask.numel()} '
+            f'N_eff={n_eff:.0f} (corr area {self.mcmc_corr_area:.2f}) '
+            f'chi2/N at MAP, f=1: {chi2/n_pix:.3f} (mask drops {100*frac_out:.1f}% of the flux)'
         )
         if frac_out > 0.10:
             LOG.warning(
@@ -1770,7 +1898,8 @@ class KinematicsFitter(BaseFitter):
                 x_C, y_C, self.true_grism_C, self.cutout_C)
             if not (torch.isfinite(image_R).all() and torch.isfinite(image_C).all()):
                 return -np.inf
-            sse = float(torch.sum(((image_R - image_C)[self.mcmc_mask])**2))
+            resid = (image_R - image_C)[self.mcmc_mask]
+            chi2 = float(torch.sum(resid**2/self.mcmc_var_map[self.mcmc_mask]))
 
         # cache the model images so get_fitting_results() keeps working; note these
         # then describe the LAST evaluated sample, not the MAP
@@ -1778,16 +1907,182 @@ class KinematicsFitter(BaseFitter):
         self.x_C, self.y_C, self.vz_C = x_C, y_C, vz_C
         self.image_R, self.image_C = image_R, image_C
 
-        var = np.exp(2.0*ln_f)*self.mcmc_var_base
-        return -0.5*sse/var - 0.5*self.n_mcmc_pix*np.log(2.0*np.pi*var)
+        # chi2 at f=1 is cached so callers (compare_null_model) can profile ln_f
+        # analytically instead of re-running the forward model.
+        self._mcmc_last_chi2 = chi2
+        return self._chi2_to_lnL(chi2, ln_f)
+
+    def _chi2_to_lnL(self, chi2, ln_f=0.0):
+        '''
+        ln L = (N_eff/N) * [ -0.5*chi2/f^2 - 0.5*N*ln f^2 - 0.5*sum ln(2 pi v_i) ],
+        where chi2 = sum r_i^2/v_i on the frozen mask. In the Adam-compatible mode
+        v_i is flat and N_eff = N, which reduces to the untempered fixed-variance
+        form. The ln(2 pi v) term is what makes ln_f identifiable; keep it.
+        '''
+        f2 = np.exp(2.0*ln_f)
+        return self.mcmc_temper*(-0.5*chi2/f2 - 0.5*self.n_mcmc_pix*np.log(f2)
+                                 - 0.5*self._mcmc_lnvar_const)
+
+    def _profiled_lnL(self, chi2):
+        '''ln L maximised over ln_f analytically (f^2 = chi2/N).'''
+        return self._chi2_to_lnL(chi2, 0.5*np.log(max(chi2, 1e-300)/self.n_mcmc_pix))
+
+    def _check_mcmc_priors(self, priors):
+        '''
+        R_v is a turnover radius; a prior that lets it exceed the cutout admits
+        a solid-body field of vanishing amplitude, i.e. a no-rotation model in
+        disguise (the ID6084 chain drifted there: R_v -> 100 px on a 41 px cutout
+        with V_rot free to take any value). Warn rather than raise so a deliberate
+        choice is still possible.
+        '''
+        half = 0.5*min(self.cutout_R[2], self.cutout_R[3])
+        for name, spec in priors:
+            if name.endswith('R_v') and float(spec.get('max', np.inf)) > half:
+                LOG.warning(
+                    f'[MCMC] prior on {name} extends to {spec.get("max")} px, beyond the '
+                    f'cutout half-size {half:.0f} px; that region is degenerate with '
+                    f'V_rot -> 0. Set mcmc.priors.{name}.max <= summary.r_fit.')
+
+    def compare_null_model(self, ln_f=None, seeds_px=(0.0, -1.0, 1.0, -2.0, 2.0),
+                           maxiter=600):
+        '''
+        Likelihood-ratio comparison of the rotating model at the CURRENT
+        parameters against a no-rotation model, on the same frozen noise model.
+
+        The null model sets V_rot = 0 -- then vz = 0 everywhere, so R_v, x0_v,
+        y0_v, theta_v and inc_v all drop out -- and re-optimises only the free
+        registration offsets (`image.*`). Because the offsets alias at whole
+        pixels, the null fit is multi-started from the current offsets shifted
+        by `seeds_px` along each axis, and the best is kept.
+
+        The R-minus-C objective can be lowered by shifting one grism along its
+        dispersion axis (a systemic-velocity shift) as well as by a velocity
+        gradient, so on a compact source the null model can compete with, or
+        beat, the rotating one: ID6084's chain migrated to exactly such a mode
+        after 9000 steps. This is the statistic that says which one the data
+        prefer. Call set_params_to_mcmc('map') first so the rotating model is
+        evaluated at its best sample.
+
+        ln_f : noise scale for both models. None -> profiled analytically for
+               each (f^2 = chi2/N) when ln_f is a sampled parameter, else the
+               fixed value.
+
+        Returns a dict with lnL_rot, lnL_null, dlnL (= rot - null, in the
+        tempered units the sampler uses), the Wilks p-value of 2*dlnL against a
+        chi-square with k degrees of freedom (k = number of kinematic parameters
+        the null model does without) and its Gaussian-equivalent `sigma_equiv`,
+        dBIC = 2*dlnL - k*ln(N_eff), chi2 of both models, and the null model's
+        offsets. Parameters are restored afterwards. Note that dBIC penalises
+        the k parameters much harder than Wilks does; on a marginal source the
+        two can disagree, and that disagreement is itself the honest answer.
+        '''
+        from scipy.optimize import minimize
+        from scipy.stats import chi2 as chi2_dist, norm
+        if self.mcmc_mask is None:
+            raise RuntimeError('call setup_noise_model() (or fit_MCMC) before compare_null_model()')
+        all_cfg = self._mcmc_stage_cfg()
+        names = getattr(self, '_mcmc_names', None)
+        if names is None:
+            names, _, _ = collect_free_scalar_params(all_cfg)
+        profile = ln_f is None and 'noise.ln_f' in tuple(self.mcmc_extra_param_names)
+        ln_f_fixed = self.mcmc_ln_f_fixed if ln_f is None else float(ln_f)
+
+        def score(chi2):
+            return self._profiled_lnL(chi2) if profile else self._chi2_to_lnL(chi2, ln_f_fixed)
+
+        saved = {n: float(all_cfg[n].tensor.detach().cpu()) for n in names}
+        v_key = 'velocity.V_rot'
+        if v_key not in all_cfg:
+            raise KeyError('no velocity.V_rot parameter in this stage')
+
+        # rotating model at the current parameters
+        ll = self.log_likelihood(**{'noise.ln_f': ln_f_fixed})
+        chi2_rot = self._mcmc_last_chi2 if np.isfinite(ll) else np.inf
+        lnL_rot = score(chi2_rot) if np.isfinite(chi2_rot) else -np.inf
+
+        # null model: V_rot = 0, free offsets only
+        off_names = [n for n in names if n.startswith('image.')]
+        with torch.no_grad():
+            all_cfg[v_key].tensor.data.fill_(0.0)
+
+        def neg(theta_off):
+            with torch.no_grad():
+                for n, v in zip(off_names, theta_off):
+                    all_cfg[n].tensor.data.fill_(float(v))
+            ll = self.log_likelihood(**{'noise.ln_f': ln_f_fixed})
+            if not np.isfinite(ll):
+                return 1e30
+            return -score(self._mcmc_last_chi2)
+
+        base = np.array([saved[n] for n in off_names])
+        starts = [base.copy()]
+        for k in range(len(off_names)):
+            for d in seeds_px:
+                if d == 0.0:
+                    continue
+                st = base.copy(); st[k] += d; starts.append(st)
+        best = None
+        for st in starts:
+            if len(off_names) == 0:
+                res_x, res_f = np.array([]), neg(np.array([]))
+            else:
+                r = minimize(neg, st, method='Nelder-Mead',
+                             options={'xatol': 1e-3, 'fatol': 1e-3, 'maxiter': maxiter})
+                res_x, res_f = r.x, r.fun
+            if best is None or res_f < best[1]:
+                best = (res_x, res_f)
+        null_off = dict(zip(off_names, map(float, best[0])))
+        lnL_null = -best[1]
+        neg(best[0])
+        chi2_null = self._mcmc_last_chi2
+
+        # restore
+        with torch.no_grad():
+            for n, v in saved.items():
+                all_cfg[n].tensor.data.fill_(v)
+        self._reset_state()
+        with torch.no_grad():
+            self.loss()
+
+        k_extra = sum(1 for n in names if n.startswith('velocity.'))
+        dlnL = lnL_rot - lnL_null
+        p_wilks = float(chi2_dist.sf(2.0*dlnL, k_extra)) if dlnL > 0 else 1.0
+        out = {
+            'lnL_rot': float(lnL_rot), 'lnL_null': float(lnL_null), 'dlnL': float(dlnL),
+            'p_wilks': p_wilks,
+            'sigma_equiv': float(norm.isf(p_wilks)) if 0 < p_wilks < 1 else (0.0 if p_wilks >= 1 else np.inf),
+            'dBIC': float(2.0*dlnL - k_extra*np.log(self.mcmc_n_eff)),
+            'k_extra': int(k_extra), 'n_pix': int(self.n_mcmc_pix),
+            'n_eff': float(self.mcmc_n_eff), 'ln_f_profiled': bool(profile),
+            'chi2_rot': float(chi2_rot), 'chi2_null': float(chi2_null),
+            'null_offsets': null_off, 'rot_offsets': {n: saved[n] for n in off_names},
+            'n_starts': len(starts),
+        }
+        LOG.info(
+            f'[MCMC] rotation vs null: dlnL={dlnL:+.2f} (Wilks p={p_wilks:.2e}, ~{out["sigma_equiv"]:.1f} sigma), '
+            f'dBIC={out["dBIC"]:+.1f} (k={k_extra}, N_eff={self.mcmc_n_eff:.0f}); '
+            f'null offsets {null_off}')
+        return out
 
     # mock data ---------------------------------------------------------------
 
     def set_params_dict(self, params):
-        '''Write {full_dotted_key: value} into the current stage's cfg tensors.'''
+        '''
+        Write {full_dotted_key: value} into the current stage's cfg tensors.
+
+        Nuisance dims of the chain that are not cfg tensors (`noise.ln_f`) are
+        routed to their own attribute, so a dict built straight from
+        `mcmc_param_names` -- e.g. the posterior median or MAP sample -- can be
+        written back without filtering.
+        '''
         all_cfg = self._mcmc_stage_cfg()
+        extras = tuple(self.mcmc_extra_param_names)
         with torch.no_grad():
             for key, value in params.items():
+                if key == 'noise.ln_f' or key in extras:
+                    if key == 'noise.ln_f':
+                        self.mcmc_ln_f_fixed = float(value)
+                    continue
                 if key not in all_cfg:
                     raise KeyError(f'{key} is not a parameter of stage {self.current_stage+1}')
                 all_cfg[key].tensor.data.fill_(float(value))
