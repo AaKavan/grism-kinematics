@@ -90,33 +90,50 @@ def dispersion_model(x, y, vz, wavelength_rest, grism_model, dx=0., dy=0., **kwa
 
     return x_G, y_G
 
-def bilinear_interpolte_intensity_torch(xg, yg, intensities, cutout): 
-            
+def bilinear_interpolte_intensity_torch(xg, yg, intensities, cutout):
+        """Scatter `intensities` through the (xg, yg) map onto the cutout canvas.
+
+        Accepts an optional leading batch dimension: xg/yg of shape (..., Hin, Win) give an
+        output of shape (..., h, w). With no batch dims this is the original scalar path.
+
+        Implementation note: the original masked with `intensities[valid]`, which works for a
+        single parameter set but collapses a batch into one ragged vector (each batch element
+        has a different number of valid pixels), so the result is unrecoverable. Here the
+        weight is multiplied by `valid` instead and the indices are clamped, which is
+        numerically identical -- the invalid entries contribute exactly 0.0 -- and keeps the
+        batch dimension intact. `scatter_add_` also replaces `index_put_(accumulate=True)`:
+        it is the same accumulation, but it has a deterministic CUDA implementation, which
+        `index_put_` does not.
+        """
         device = intensities.device
-        x0, y0, w, h = cutout
-        # print(x0, y0, w, h )
-        H, W = h, w
-        image = torch.zeros(h, w, device=device)
+        x0_c, y0_c, w_cut, h_cut = cutout
+        H, W = h_cut, w_cut
+
+        batch = tuple(xg.shape[:-2])
+        n_in = xg.shape[-2] * xg.shape[-1]
 
         # Transform coordinates to cutout frame
-        xg_cut = xg - x0
-        yg_cut = yg - y0
+        xg_cut = xg - x0_c
+        yg_cut = yg - y0_c
 
-        # Scatter intensities using bilinear interpolation
-        x0 = torch.floor(xg_cut).long()
-        y0 = torch.floor(yg_cut).long()
-        dx = xg_cut - x0.float()
-        dy = yg_cut - y0.float()
+        xi0 = torch.floor(xg_cut).long()
+        yi0 = torch.floor(yg_cut).long()
+        dx = xg_cut - xi0.to(xg_cut.dtype)
+        dy = yg_cut - yi0.to(yg_cut.dtype)
+
+        flat = torch.zeros(*batch, H * W, device=device, dtype=intensities.dtype)
 
         for i in range(2):
             for j in range(2):
-                w = ((1 - dx) if i == 0 else dx) * ((1 - dy) if j == 0 else dy)
-                xi = x0 + i
-                yj = y0 + j
+                wt = ((1 - dx) if i == 0 else dx) * ((1 - dy) if j == 0 else dy)
+                xi = xi0 + i
+                yj = yi0 + j
                 valid = (xi >= 0) & (xi < W) & (yj >= 0) & (yj < H)
-                image.index_put_((yj[valid], xi[valid]), intensities[valid] * w[valid], accumulate=True)
+                lin = (yj.clamp(0, H - 1) * W + xi.clamp(0, W - 1)).reshape(*batch, n_in)
+                vals = (intensities * wt * valid.to(intensities.dtype)).reshape(*batch, n_in)
+                flat.scatter_add_(-1, lin, vals)
 
-        return image
+        return flat.reshape(*batch, H, W)
 
 def scatter_shifted_psf(xg, yg, intensities, psf, cutout):
     """
@@ -288,7 +305,10 @@ def iteratively_find_xy(x_init, y_init, cutout, lambda_rest, x_G, y_G,
         lambda_new = lambda_rest * (1.0 + vz_new / c)
         x_new, y_new = forward_dispersion_model(x_G, y_G, lambda_new, **kwargs)
         # print(torch.max(torch.abs(x_new - x)), torch.max(torch.abs(y_new - y)))
-        if torch.max(torch.abs(x_new - x)) < tol and \
+        # `tol <= 0` means the caller wants a fixed iteration count (fit_MCMC does), so the
+        # test can never pass -- short-circuit it. Each evaluation is two full-grid
+        # reductions plus a device sync, 80 per likelihood call at maxiter=40 x 2 grisms.
+        if tol > 0 and torch.max(torch.abs(x_new - x)) < tol and \
            torch.max(torch.abs(y_new - y)) < tol:
             x = alpha*x + (1 - alpha)*x_new
             y = alpha*y + (1 - alpha)*y_new

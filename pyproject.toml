@@ -9,7 +9,7 @@ description = "Dispersion-based INference for Galaxy Observations using R+C Gris
 authors = [
   {name = "Yichen Liu", email = "yichenliu@arizona.edu"}
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 dependencies = [
   "numpy",
   "torch",

@@ -165,7 +165,7 @@ def fftconvolve_torch(in1, in2, mode='same'):
     else:
         raise ValueError("mode must be 'full', 'same', or 'valid'")
 
-def get_grism_model_torch(this_spatial_model, this_disp_model, this_pupil, pixelx, pixely, direction='backward'):
+def get_grism_model_torch(this_spatial_model, this_disp_model, this_pupil, pixelx, pixely, direction='backward', device=None):
     """
     Fully differentiable version of find_pixel_location_torch using torchinterp1d.
 
@@ -203,9 +203,12 @@ def get_grism_model_torch(this_spatial_model, this_disp_model, this_pupil, pixel
     # print(dys_np)
 
     # Convert to torch tensors
-    dxs = torch.tensor(dxs_np, dtype=torch.float32, requires_grad=False)
-    dys = torch.tensor(dys_np, dtype=torch.float32, requires_grad=False)
-    wavs = torch.tensor(wavs_np, dtype=torch.float32, requires_grad=False)
+    # These are captured in the closure below and used on every model evaluation, so they
+    # must live on the same device as the data. Without `device=` they stay on the CPU and
+    # torch.searchsorted in interp1d raises as soon as anything runs on CUDA.
+    dxs = torch.tensor(dxs_np, dtype=torch.float32, requires_grad=False, device=device)
+    dys = torch.tensor(dys_np, dtype=torch.float32, requires_grad=False, device=device)
+    wavs = torch.tensor(wavs_np, dtype=torch.float32, requires_grad=False, device=device)
 
     # Sort by wavelength
     order = torch.argsort(wavs)

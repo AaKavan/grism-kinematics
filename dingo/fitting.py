@@ -814,8 +814,32 @@ class BaseFitter(ABC):
             return -np.inf
         return lp + ll
 
+    def log_probability_batch(self, thetas):
+        '''Vectorised log_probability for emcee(vectorize=True).
+
+        thetas is (B, ndim); returns (B,). Identical arithmetic to the scalar
+        log_probability -- the prior is still evaluated per sample (it is pure numpy and
+        costs nothing next to the model), and only the samples inside the prior support are
+        handed to the model, so out-of-support proposals never touch it.
+        '''
+        thetas = np.atleast_2d(np.asarray(thetas, dtype=float))
+        out = np.full(thetas.shape[0], -np.inf)
+        lp = np.array([self.log_prior(t) for t in thetas])
+        good = np.isfinite(lp)
+        if not good.any():
+            return out
+        try:
+            ll = self.log_likelihood_batch(thetas[good])
+        except Exception as exc:
+            LOG.debug(f'[MCMC] batched likelihood failed: {exc}')
+            return out
+        vals = lp[good] + np.asarray(ll, dtype=float)
+        vals[~np.isfinite(vals)] = -np.inf
+        out[good] = vals
+        return out
+
     def fit_MCMC(self, nwalkers=None, nsteps=None, nburn=None,
-                 init_scatter=None, pool=None, moves=None, seed=None):
+                 init_scatter=None, pool=None, moves=None, seed=None, vectorize=None):
         '''
         Ensemble MCMC (emcee) over the free parameters of the current stage, plus
         any nuisance dims listed in mcmc_extra_param_names.
@@ -1062,9 +1086,20 @@ class BaseFitter(ABC):
                 else:
                     backend.reset(nwalkers, ndim)
 
+        # `mcmc.vectorize: true` hands emcee the batched log-probability, so every walker in
+        # a half-step is evaluated in ONE call. The model is launch-bound at 81x81, so on a
+        # GPU the wall clock is nearly flat in batch size -- this is where the speedup comes
+        # from, not from the device itself. Default False keeps the scalar path exactly.
+        vectorize = bool(mc.get('vectorize', False)) if vectorize is None else bool(vectorize)
+        if vectorize and pool is not None:
+            LOG.warning('[MCMC] vectorize=True ignores pool= (the batch is already one call)')
+            pool = None
+        logp = self.log_probability_batch if vectorize else self.log_probability
+        if vectorize:
+            LOG.info(f'[MCMC] vectorised: {nwalkers//2} walkers per model call')
         sampler = emcee.EnsembleSampler(
-            nwalkers, ndim, self.log_probability, pool=pool, moves=moves,
-            backend=backend
+            nwalkers, ndim, logp, pool=pool, moves=moves,
+            backend=backend, vectorize=vectorize
         )
 
         # Legacy compressed checkpoints remain supported for configurations
@@ -1440,7 +1475,7 @@ class KinematicsFitter(BaseFitter):
         for pupil in ['R', 'C']:
             _, sp, dp = grism.load_nircam_wfss_model(pupil, img_cfg[pupil]['module'], self.filter)
             self.fwd_models[pupil] = utils.get_grism_model_torch(
-                sp, dp, pupil, 1024, 1024, direction='forward'
+                sp, dp, pupil, 1024, 1024, direction='forward', device=self.device
             )
 
         # ─────────────────────────────
@@ -1512,7 +1547,8 @@ class KinematicsFitter(BaseFitter):
         # ─────────────────────────────
         nx, ny = self.true_grism_R.shape
         self.y_G, self.x_G = torch.meshgrid(
-            torch.arange(nx), torch.arange(ny), indexing='ij'
+            torch.arange(nx, device=self.device),
+            torch.arange(ny, device=self.device), indexing='ij'
         )
 
         # Explicit cutouts are preferred. For configs predating the `cutout` key,
@@ -1911,6 +1947,91 @@ class KinematicsFitter(BaseFitter):
         # analytically instead of re-running the forward model.
         self._mcmc_last_chi2 = chi2
         return self._chi2_to_lnL(chi2, ln_f)
+
+    def _batched_model_params(self, thetas):
+        '''Parameter dicts with the sampled entries promoted to (B,1,1) tensors.
+
+        Unsampled parameters stay as the 0-d cfg tensors and broadcast against them, so a
+        batched evaluation sees exactly the values a scalar one would.
+        '''
+        B = thetas.shape[0]
+        groups = {'velocity': dict(self._get_model_params('velocity')),
+                  'image.R': dict(self._get_model_params('dispersion_R')),
+                  'image.C': dict(self._get_model_params('dispersion_C'))}
+        t = torch.as_tensor(thetas, dtype=torch.float32, device=self.device)
+        for j, cfg in enumerate(self._mcmc_cfgs):
+            grp, leaf = cfg.name.rsplit('.', 1)
+            if grp in groups:
+                groups[grp][leaf] = t[:, j].view(B, 1, 1)
+        return groups['velocity'], groups['image.R'], groups['image.C']
+
+    def log_likelihood_batch(self, thetas):
+        '''Vectorised twin of log_likelihood: (B, ndim) -> (B,) numpy.
+
+        Same cold start, same fixed iteration count, same frozen mask/variance and the same
+        _chi2_to_lnL as the scalar path -- only the parameter axis is added. The per-sample
+        validity gates replace the scalar -inf returns, so one bad walker no longer discards
+        the batch. Deliberately does NOT write self.x_R/image_R etc: caching the last
+        evaluated sample is what makes a bare loss() after sampling report a random walker.
+        '''
+        if self.mcmc_mask is None:
+            raise RuntimeError('call setup_noise_model() before log_likelihood_batch()')
+        thetas = np.atleast_2d(np.asarray(thetas, dtype=float))
+        B = thetas.shape[0]
+        n = len(self._mcmc_cfgs)
+
+        ln_f = np.full(B, float(self.mcmc_ln_f_fixed))
+        for j, nm in enumerate(self.mcmc_extra_param_names):
+            if nm == 'noise.ln_f':
+                ln_f = thetas[:, n + j].astype(float)
+
+        velocity, disp_R, disp_C = self._batched_model_params(thetas)
+        niter = self.mcmc_xy_iters
+        xg = self.x_G.unsqueeze(0).expand(B, -1, -1)
+        yg = self.y_G.unsqueeze(0).expand(B, -1, -1)
+
+        with torch.no_grad():
+            out = []
+            for cutout, foot, disp, data in (
+                    (self.cutout_R, self.mcmc_foot_R, disp_R, self.true_grism_R),
+                    (self.cutout_C, self.mcmc_foot_C, disp_C, self.true_grism_C)):
+                # Pass the EXPANDED grid, not self.x_G: forward_dispersion_model batches
+                # the grid only via `x_G + dx`, and dx is 0-d whenever that offset is
+                # frozen (image.C.dx/dy are `fit: false` in the production configs), which
+                # would leave the C grid unbatched against a batched wavelength image.
+                x, y, _, _ = kinematics.iteratively_find_xy(
+                    xg.clone(), yg.clone(), cutout, self.lambda_rest, xg, yg,
+                    maxiter=niter, tol=0.0, **velocity, **disp)
+                out.append((x, y, cutout, foot, disp, data))
+
+            ok = torch.ones(B, dtype=torch.bool, device=self.device)
+            images = []
+            for x, y, cutout, foot, disp, data in out:
+                ok &= self._xy_converged_batch(x, y, cutout, foot, velocity, disp, xg, yg)
+                img = kinematics.bilinear_interpolte_intensity_torch(x, y, data, cutout)
+                ok &= torch.isfinite(img).flatten(1).all(dim=1)
+                images.append(img)
+
+            diff2 = (images[0] - images[1])**2 / self.mcmc_var_map
+            chi2 = (diff2 * self.mcmc_mask).flatten(1).sum(dim=1)
+
+        chi2_np = chi2.detach().cpu().numpy().astype(float)
+        lnL = self._chi2_to_lnL(chi2_np, ln_f)
+        lnL = np.where(ok.detach().cpu().numpy() & np.isfinite(lnL), lnL, -np.inf)
+        return lnL
+
+    def _xy_converged_batch(self, x, y, cutout, foot, velocity, disp, xg, yg):
+        '''Per-sample twin of _xy_converged: (B,) bool instead of a single bool.'''
+        c = 299792.458  # km/s
+        vz = kinematics.arctangent_disk_velocity_model(x - cutout[0], y - cutout[1], **velocity)
+        lambda_obs = self.lambda_rest*(1.0 + vz/c)
+        x_new, y_new = kinematics.forward_dispersion_model(xg, yg, lambda_obs, **disp)
+        finite = (torch.isfinite(x_new).flatten(1).all(dim=1)
+                  & torch.isfinite(y_new).flatten(1).all(dim=1))
+        f = foot.to(x_new.dtype)
+        dxm = ((x_new - x).abs()*f).flatten(1).amax(dim=1)
+        dym = ((y_new - y).abs()*f).flatten(1).amax(dim=1)
+        return finite & (dxm < self.mcmc_xy_tol) & (dym < self.mcmc_xy_tol)
 
     def _chi2_to_lnL(self, chi2, ln_f=0.0):
         '''

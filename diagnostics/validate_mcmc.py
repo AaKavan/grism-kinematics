@@ -60,6 +60,10 @@ LOG = logging.getLogger('validate')
 DEFAULT_ID = '15665'
 DEFAULT_WORKDIR = os.path.join(ROOT, 'data')
 DEFAULT_OUTDIR = os.path.join(ROOT, 'results')
+# Relative to --workdir, matching how main() fills args.config when it is not given.
+# Every call site passes an explicit config; this exists so the `def build_fitter(
+# config=DEFAULT_CONFIG, ...)` default does not raise NameError at import time.
+DEFAULT_CONFIG = f'ID{DEFAULT_ID}/config_kinematics.yaml'
 
 
 def setup_logging():
