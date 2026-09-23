@@ -218,7 +218,19 @@ def load_fits_data(path_hdu):
     '''the slice syntax is capable for both hdu index and hdu name'''
     path, hdu = path_hdu
     with fits.open(path) as hdulist:
-        return np.array(hdulist[hdu].data, dtype=np.float32)
+        arr = np.array(hdulist[hdu].data, dtype=np.float32)
+    # A single non-finite pixel propagates through the rectification into every output
+    # pixel, so log_likelihood's isfinite guard then returns -inf for EVERY theta and
+    # fit_MCMC dies at walker initialisation with '32/32 walkers start at -inf' -- which
+    # says nothing about the real cause. Fail here instead, where the file is named.
+    n_bad = int((~np.isfinite(arr)).sum())
+    if n_bad:
+        raise ValueError(
+            f'{path}[{hdu}] contains {n_bad}/{arr.size} non-finite pixels. The fit cannot '
+            f'proceed: they propagate through the rectification and make the likelihood '
+            f'-inf at every theta. Repair or mask them in the input stamp first.'
+        )
+    return arr
 
 #%% --------------------------------------------------------------------------
 # MCMC helpers (used by BaseFitter.fit_MCMC)
@@ -277,6 +289,21 @@ def collect_free_scalar_params(cfgs: Dict[str, FitParamConfig]):
         names.append(key)
         out.append(cfg)
     return names, out, aliases
+
+def _circular_percentile(x, period, lo_bound, percentiles):
+    """Percentiles of an angular variable, taken about its circular mean.
+
+    A plain np.percentile on an angle is meaningless when the posterior straddles the
+    branch cut -- samples pile up at both ends and the median lands halfway round the
+    circle. Recentre on the circular mean, take ordinary percentiles of the (now
+    unwrapped) offsets, then map back into [lo_bound, lo_bound+period).
+    """
+    ang = 2.0*np.pi*(np.asarray(x, dtype=float) - lo_bound)/period
+    mean_ang = np.arctan2(np.mean(np.sin(ang)), np.mean(np.cos(ang)))
+    d = (ang - mean_ang + np.pi) % (2.0*np.pi) - np.pi        # offsets in (-pi, pi]
+    qs = np.percentile(d, percentiles) + mean_ang
+    return lo_bound + (qs % (2.0*np.pi))*period/(2.0*np.pi)
+
 
 def estimate_background_sigma(image, source_mask=None, sigma=3.0, maxiters=10):
     '''
@@ -709,6 +736,16 @@ class BaseFitter(ABC):
                     f'({s["min"]:.3g}, {s["max"]:.3g}), which is effectively unbounded. '
                     f'Set mcmc.priors["{name}"] explicitly.'
                 )
+            # theta_v is an ANGLE: the velocity field depends on it only through sin/cos,
+            # so the likelihood is already 2*pi-periodic. Treat a full-turn uniform prior on
+            # it as circular, otherwise the hard -inf at the window edge stops walkers
+            # crossing the branch cut and truncates any posterior that sits near it. Can
+            # also be forced with `circular: true` in mcmc.priors.
+            period = float(s['max']) - float(s['min'])
+            if s.get('circular') or (s['type'] == 'uniform' and name.endswith('theta_v')
+                                     and abs(period - 2.0*np.pi) < 1e-6):
+                s['circular'] = True
+                s['period'] = period
             priors.append((name, s))
         for name in self.mcmc_extra_param_names:
             priors.append((name, dict(spec.get(name, {'type': 'uniform', 'min': -3.0, 'max': 3.0}))))
@@ -727,6 +764,10 @@ class BaseFitter(ABC):
         lp = 0.0
         for (name, s), v in zip(self._mcmc_priors, theta):
             t = s['type']
+            if s.get('circular'):
+                # fold into [min, min+period): the likelihood is periodic, so this is a
+                # relabelling of the same model, not a change of support
+                v = s['min'] + (v - s['min']) % s['period']
             if t == 'uniform':
                 if not (s['min'] <= v <= s['max']):
                     return -np.inf
@@ -995,7 +1036,23 @@ class BaseFitter(ABC):
                         f'probably far too wide for a parameter near a bound: '
                         f'{dict(zip(self.mcmc_param_names, scales))}')
 
-        lnp0 = np.array([self.log_probability(p) for p in p0])
+        # `mcmc.vectorize: true` hands emcee the batched log-probability, so every walker in
+        # a half-step is evaluated in ONE call. The model is launch-bound at 81x81, so on a
+        # GPU the wall clock is nearly flat in batch size -- this is where the speedup comes
+        # from, not from the device itself. Default False keeps the scalar path exactly.
+        vectorize = bool(mc.get('vectorize', False)) if vectorize is None else bool(vectorize)
+        if vectorize and pool is not None:
+            LOG.warning('[MCMC] vectorize=True ignores pool= (the batch is already one call)')
+            pool = None
+        logp = self.log_probability_batch if vectorize else self.log_probability
+        if vectorize:
+            LOG.info(f'[MCMC] vectorised: {nwalkers//2} walkers per model call')
+
+        # Validate the starting walkers with the SAME path the sampler will use. Checking the
+        # scalar one while sampling the batched one lets a batch-only failure through, and the
+        # chain then sits frozen at -inf instead of raising.
+        lnp0 = np.asarray(logp(p0)) if vectorize \
+            else np.array([self.log_probability(p) for p in p0])
         if not np.all(np.isfinite(lnp0)):
             bad = p0[np.argmin(lnp0)]
             raise RuntimeError(
@@ -1086,17 +1143,6 @@ class BaseFitter(ABC):
                 else:
                     backend.reset(nwalkers, ndim)
 
-        # `mcmc.vectorize: true` hands emcee the batched log-probability, so every walker in
-        # a half-step is evaluated in ONE call. The model is launch-bound at 81x81, so on a
-        # GPU the wall clock is nearly flat in batch size -- this is where the speedup comes
-        # from, not from the device itself. Default False keeps the scalar path exactly.
-        vectorize = bool(mc.get('vectorize', False)) if vectorize is None else bool(vectorize)
-        if vectorize and pool is not None:
-            LOG.warning('[MCMC] vectorize=True ignores pool= (the batch is already one call)')
-            pool = None
-        logp = self.log_probability_batch if vectorize else self.log_probability
-        if vectorize:
-            LOG.info(f'[MCMC] vectorised: {nwalkers//2} walkers per model call')
         sampler = emcee.EnsembleSampler(
             nwalkers, ndim, logp, pool=pool, moves=moves,
             backend=backend, vectorize=vectorize
@@ -1330,9 +1376,16 @@ class BaseFitter(ABC):
         actually constrains, and is far tighter than either component alone.
         '''
         chain = self.mcmc_chain
+        # getattr: a fitter that only loaded a saved chain has no prior specs; fall back
+        # to plain percentiles rather than raising.
+        circ = {n: sp for n, sp in getattr(self, '_mcmc_priors', []) if sp.get('circular')}
         out = {}
         for j, name in enumerate(self.mcmc_param_names):
-            lo, med, hi = np.percentile(chain[:, j], percentiles)
+            if name in circ:
+                lo, med, hi = _circular_percentile(
+                    chain[:, j], circ[name]['period'], circ[name]['min'], percentiles)
+            else:
+                lo, med, hi = np.percentile(chain[:, j], percentiles)
             out[name] = (float(lo), float(med), float(hi))
         names = list(self.mcmc_param_names)
         if 'velocity.V_rot' in names and 'velocity.inc_v' in names:
@@ -1738,6 +1791,19 @@ class KinematicsFitter(BaseFitter):
             f'var_base={self.mcmc_var_base:.5g} N_pix={self.n_mcmc_pix}')
         return self.mcmc_mask
 
+    def invalidate_noise_model(self):
+        self._mcmc_inv_var = None
+        """Drop the frozen mask/variance so the next fit_MCMC re-derives them.
+
+        setup_noise_model() freezes mcmc_mask, mcmc_var_map, _mcmc_lnvar_const, n_mcmc_pix,
+        mcmc_temper and the footprints against the data AND the parameters it was called at,
+        and _mcmc_prepare only builds them when mcmc_mask is None. Swapping the data under a
+        frozen model (make_mock_data / restore_true_data) would otherwise silently keep
+        scoring new data with the old mask -- which every caller currently works around by
+        calling setup_noise_model() by hand.
+        """
+        self.mcmc_mask = None
+
     def setup_noise_model(self, sigma_R=None, sigma_C=None,
                           cov_threshold=0.25, extra_mask=None):
         '''
@@ -1792,6 +1858,7 @@ class KinematicsFitter(BaseFitter):
         self.sigma_C = float(sigma_C) if sigma_C is not None \
             else estimate_background_sigma(self.true_grism_C)
 
+        self._mcmc_inv_var = None      # rebuilt lazily from the new mask/variance
         self._reset_state()
         with torch.no_grad():
             self.loss()  # populate x_R/y_R/x_C/y_C at the current (MAP) parameters
@@ -2012,8 +2079,20 @@ class KinematicsFitter(BaseFitter):
                 ok &= torch.isfinite(img).flatten(1).all(dim=1)
                 images.append(img)
 
-            diff2 = (images[0] - images[1])**2 / self.mcmc_var_map
-            chi2 = (diff2 * self.mcmc_mask).flatten(1).sum(dim=1)
+            # Multiply by a masked inverse variance rather than dividing by var_map and
+            # masking afterwards. setup_noise_model already excludes var<=0 from the mask,
+            # but dividing first still evaluates 1/0 = inf there, and inf*0 is NaN -- which
+            # poisons the whole per-sample sum and returns -inf for every walker. The scalar
+            # log_likelihood avoids this only because it indexes [mask] before dividing.
+            # ID21636 has 2 such pixels; ID15665 has none, which is why this survived the
+            # first equivalence test.
+            if getattr(self, '_mcmc_inv_var', None) is None \
+                    or self._mcmc_inv_var.shape != self.mcmc_var_map.shape:
+                safe = torch.where(self.mcmc_mask, self.mcmc_var_map,
+                                   torch.ones_like(self.mcmc_var_map))
+                self._mcmc_inv_var = torch.where(
+                    self.mcmc_mask, 1.0/safe, torch.zeros_like(safe))
+            chi2 = ((images[0] - images[1])**2 * self._mcmc_inv_var).flatten(1).sum(dim=1)
 
         chi2_np = chi2.detach().cpu().numpy().astype(float)
         lnL = self._chi2_to_lnL(chi2_np, ln_f)
@@ -2316,6 +2395,7 @@ class KinematicsFitter(BaseFitter):
                 self._true_grism_backup = (self.true_grism_R, self.true_grism_C)
             self.true_grism_R = mocks['R']
             self.true_grism_C = mocks['C']
+            self.invalidate_noise_model()
             LOG.info(
                 f'[mock] injected mock R/C (sigma_R={float(sigma_R):.4g}, '
                 f'sigma_C={float(sigma_C):.4g}); call restore_true_data() to undo'
@@ -2328,6 +2408,7 @@ class KinematicsFitter(BaseFitter):
             return False
         self.true_grism_R, self.true_grism_C = self._true_grism_backup
         del self._true_grism_backup
+        self.invalidate_noise_model()
         return True
 
 #%% --------------------------------------------------------------------------

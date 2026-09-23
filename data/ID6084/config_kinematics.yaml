@@ -103,7 +103,8 @@ mcmc:
   # mean sum of squared bilinear weights (~0.44), and is kept only for comparison.
   likelihood: gaussian
   init: adam
-  nwalkers: 32
+  vectorize: true      # batched likelihood, matching the ID15665 run
+  nwalkers: 256
   nsteps: 8000
   nburn: 2000
   xy_iters: 40

@@ -157,7 +157,13 @@ def main():
     if not args.no_plots:
         import matplotlib
         matplotlib.use('Agg')
-        full_chain = fitter.mcmc_sampler.get_chain()
+        # _mcmc_raw_chain is this run concatenated with anything resumed from the
+        # checkpoint; sampler.get_chain() is only the current segment, so on a resume
+        # the trace would omit the earlier steps while nburn is an absolute index --
+        # and it raises outright when the checkpoint was already complete.
+        full_chain = getattr(fitter, '_mcmc_raw_chain', None)
+        if full_chain is None:
+            full_chain = fitter.mcmc_sampler.get_chain()
         plot.plot_mcmc_chains(
             full_chain, names, nburn=fitter.mcmc_nburn, show=False,
             filename=os.path.join(args.outdir, f'{name}_chains.png'))

@@ -85,7 +85,8 @@ mcmc:
   # Stage 1 (index 0): stage 2 freezes theta_v for the polish, so sampling there
   # would silently drop it from the free set.
   stage: 0
-  nwalkers: 32
+  vectorize: true      # batched likelihood, matching the ID15665/ID6084 runs
+  nwalkers: 256
   nsteps: 8000
   nburn: 2000
   xy_iters: 40
