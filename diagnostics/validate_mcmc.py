@@ -80,19 +80,12 @@ def build_fitter(config=DEFAULT_CONFIG, fit=True):
     f = fitting.KinematicsFitter(config_path=config)
     if fit:
         f.fit_all()
-    mc = f.config.get('mcmc') or {}
-    stage = int(mc.get('stage', f.current_stage))
-    f.current_stage = stage
-    f._assign_cfgs_for_stage(stage)
-    f.mcmc_xy_iters = int(mc.get('xy_iters', 40))
-    f.mcmc_xy_tol = float(mc.get('xy_tol', 5e-3))
+    setup = f.prepare_mcmc()
+    # The validator scores everything at f=1 rather than at the config's noise
+    # scale, so this override has to land AFTER prepare_mcmc(), which re-reads
+    # mcmc_ln_f_fixed from the config.
     f.mcmc_ln_f_fixed = 0.0
-    f.setup_noise_model()
-    names, cfgs, _ = fitting.collect_free_scalar_params(f._mcmc_stage_cfg())
-    f._mcmc_names, f._mcmc_cfgs = names, cfgs
-    f.mcmc_param_names = list(names) + list(f.mcmc_extra_param_names)
-    f._mcmc_priors = f._build_mcmc_priors()
-    return f, names
+    return f, setup['names']
 
 
 def current_theta(f, names):

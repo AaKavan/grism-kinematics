@@ -178,7 +178,15 @@ def build_param_config_dict_with_alias(
     '''
 
     if all_cfgs is None:
-        all_cfgs = [{}]*len(default_cfgs)  # Create a fresh dict if not provided
+        # `[{}]*n` is n references to ONE dict, so every stage would share an alias
+        # namespace. It happens not to leak today -- `all_cfg.update(cfgs)` below runs
+        # before alias resolution, and raw_dict is identical for every stage, so a
+        # stage's own cfgs always overwrite the shared entries first -- but that is a
+        # property of the current callers, not of this function.
+        all_cfgs = [{} for _ in default_cfgs]
+    elif len(all_cfgs) != len(set(map(id, all_cfgs))):
+        # Same hazard, from a caller that built the list the same way.
+        all_cfgs = [dict(c) for c in all_cfgs]
 
     # --- ensure inputs are lists ----------------------------------------------
     if not isinstance(default_cfgs, list):
@@ -914,29 +922,57 @@ class BaseFitter(ABC):
         out[good] = vals
         return out
 
-    def fit_MCMC(self, nwalkers=None, nsteps=None, nburn=None,
-                 init_scatter=None, pool=None, moves=None, seed=None, vectorize=None):
-        '''
-        Ensemble MCMC (emcee) over the free parameters of the current stage, plus
-        any nuisance dims listed in mcmc_extra_param_names.
+    def prepare_mcmc(self, stage=None):
+        '''Put the fitter in exactly the state fit_MCMC samples from, without sampling.
 
-        Walkers start in a small Gaussian ball around the CURRENT parameter values,
-        so run fit_gradient()/fit_all() first: this samples the mode you already
-        found, it does not search for one.
+        Everything fit_MCMC does before it touches emcee: select the stage, collect
+        the free scalar parameters, freeze the noise model, build the priors, and
+        move the starting point onto the branch the prior supports. Returns a dict
+        with `names`, `cfgs`, `param_names`, `priors`, `theta0` and `ndim`, or None
+        when the stage has no free scalar parameter.
 
-        Settings come from the optional `mcmc:` block of the config, and the
-        keyword arguments override those. Returns (flat_chain, flat_log_prob).
+        This exists because the preamble used to be inline, so `_mcmc_names`,
+        `_mcmc_cfgs`, `_mcmc_priors` and `mcmc_param_names` were set only by a call
+        to fit_MCMC -- and they have no class-level defaults, unlike mcmc_xy_iters
+        and friends. Anything wanting to score a saved chain rather than run a new
+        one therefore had to reproduce this by hand, and five places did, each
+        slightly differently; the ones that skipped `_build_mcmc_priors` could call
+        log_likelihood but not log_probability, because log_prior dereferences
+        `_mcmc_priors`. Does not import emcee, so a script that only needs the
+        likelihood does not need the sampler installed.
+
+        Call it AFTER fit_all(). The noise model is frozen at the CURRENT
+        parameters, so preparing before the fit freezes the wrong model.
+
+        Idempotent: calling it twice leaves theta0, param_names, priors, the mask
+        and log_probability(theta0) bit-identical. The two steps that mutate
+        parameters -- the amplitude reflection and the theta_v wrap -- are each
+        fixed points once applied, and the noise freeze is guarded on
+        `mcmc_mask is None`. The one exception is `mcmc_ln_f_fixed`, which is
+        re-read from the config, so a caller that set it by hand must set it again.
+
+        Note it can CHANGE the fitted parameters: a negative amplitude is reflected
+        onto the positive branch and theta_v is wrapped into the prior window. Both
+        leave the velocity field identical, but a script comparing a chain MAP
+        against "the Adam result" is comparing against the pre-reflection values
+        unless it calls this first.
         '''
-        emcee = _import_emcee()
         mc = self.config.get('mcmc') or {}
-
         # Which stage's free-parameter set to sample. fit_all() leaves the fitter on
         # the LAST stage, which typically has parameters frozen for the final polish;
         # `mcmc.stage` selects a stage whose fit flags describe what should be
         # sampled. Stages share parameter tensors, so the fitted values carry over.
-        stage = mc.get('stage')
-        if stage is not None and int(stage) != self.current_stage:
-            self.current_stage = int(stage)
+        if stage is None:
+            stage = mc.get('stage')
+        if stage is not None:
+            stage, nstages = int(stage), len(self.config['fitting'])
+            if not 0 <= stage < nstages:
+                raise IndexError(
+                    f'mcmc.stage={stage} is not a stage of this config, which has '
+                    f'{nstages} (0..{nstages-1}). A negative value used to index from '
+                    f'the end silently.')
+        if stage is not None and stage != self.current_stage:
+            self.current_stage = stage
             self._assign_cfgs_for_stage(self.current_stage)
             LOG.info(f'[MCMC] sampling the free parameters of fitting stage {self.current_stage+1}')
 
@@ -952,7 +988,7 @@ class BaseFitter(ABC):
                 f'[{self.__class__.__name__}] no free scalar parameters in '
                 f'stage {self.current_stage+1}, skipping MCMC.'
             )
-            return [], []
+            return None
         for kept, dropped in alias_map.items():
             LOG.info(f'[MCMC] {dropped} alias(es) of {kept}, sampled once')
 
@@ -962,28 +998,10 @@ class BaseFitter(ABC):
         self._mcmc_priors = self._build_mcmc_priors()
         ndim = len(self.mcmc_param_names)
 
-        nwalkers = int(nwalkers if nwalkers is not None else mc.get('nwalkers', max(32, 4*ndim)))
-        nsteps = int(nsteps if nsteps is not None else mc.get('nsteps', 8000))
-        nburn = int(nburn if nburn is not None else mc.get('nburn', 2000))
-        cadence = int(mc.get('log_cadence', 200))
-        if nwalkers < 2*ndim:
-            LOG.warning(f'[MCMC] nwalkers={nwalkers} < 2*ndim={2*ndim}; raising to {2*ndim}')
-            nwalkers = 2*ndim
-        if seed is None:
-            seed = mc.get('seed')
-        rng = np.random.default_rng(seed)
-
         theta0 = np.array(
             [float(cfg.tensor.detach().cpu()) for cfg in self._mcmc_cfgs]
             + [self.mcmc_ln_f_fixed]*len(self.mcmc_extra_param_names)
         )
-        scatter_cfg = dict(mc.get('init_scatter') or {})
-        scatter_cfg.update(init_scatter or {})
-        scales = np.array([
-            float(scatter_cfg.get(name, max(1e-3, 1e-3*abs(v))))
-            for name, v in zip(self.mcmc_param_names, theta0)
-        ])
-
         # (V_rot, theta_v) and (-V_rot, theta_v + pi) give an IDENTICAL vz field,
         # so a galaxy rotating the other way can be fitted with either sign. The
         # config may start V_rot negative on purpose (the sample's rotation sense
@@ -1037,6 +1055,54 @@ class BaseFitter(ABC):
                 'inc_v -> 0 together usually means no velocity signal was found, '
                 'and an informative inclination prior prevents it), or the prior '
                 'window in mcmc.priors is too narrow for this source.')
+
+        return {'names': list(self._mcmc_names), 'cfgs': list(self._mcmc_cfgs),
+                'param_names': list(self.mcmc_param_names),
+                'priors': list(self._mcmc_priors),
+                'theta0': theta0, 'ndim': len(self.mcmc_param_names)}
+
+    def fit_MCMC(self, nwalkers=None, nsteps=None, nburn=None,
+                 init_scatter=None, pool=None, moves=None, seed=None, vectorize=None,
+                 stage=None):
+        '''
+        Ensemble MCMC (emcee) over the free parameters of the current stage, plus
+        any nuisance dims listed in mcmc_extra_param_names.
+
+        Walkers start in a small Gaussian ball around the CURRENT parameter values,
+        so run fit_gradient()/fit_all() first: this samples the mode you already
+        found, it does not search for one.
+
+        Settings come from the optional `mcmc:` block of the config, and the
+        keyword arguments override those. Returns (flat_chain, flat_log_prob).
+        '''
+        emcee = _import_emcee()
+        mc = self.config.get('mcmc') or {}
+
+        setup = self.prepare_mcmc(stage=stage)
+        if setup is None:
+            return [], []
+        theta0, ndim = setup['theta0'], setup['ndim']
+
+        nwalkers = int(nwalkers if nwalkers is not None else mc.get('nwalkers', max(32, 4*ndim)))
+        nsteps = int(nsteps if nsteps is not None else mc.get('nsteps', 8000))
+        nburn = int(nburn if nburn is not None else mc.get('nburn', 2000))
+        cadence = int(mc.get('log_cadence', 200))
+        if nwalkers < 2*ndim:
+            LOG.warning(f'[MCMC] nwalkers={nwalkers} < 2*ndim={2*ndim}; raising to {2*ndim}')
+            nwalkers = 2*ndim
+        if seed is None:
+            seed = mc.get('seed')
+        rng = np.random.default_rng(seed)
+
+        # init_scatter is sampler strategy, not model state, so it stays here.
+        # The |v| makes it invariant to the amplitude reflection prepare_mcmc may
+        # have applied, so computing it after that reflection is exact.
+        scatter_cfg = dict(mc.get('init_scatter') or {})
+        scatter_cfg.update(init_scatter or {})
+        scales = np.array([
+            float(scatter_cfg.get(name, max(1e-3, 1e-3*abs(v))))
+            for name, v in zip(self.mcmc_param_names, theta0)
+        ])
 
         init_mode = str(mc.get('init', 'adam')).lower()
         if init_mode not in {'adam', 'prior'}:

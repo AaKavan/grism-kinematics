@@ -68,13 +68,8 @@ def scan(source_id, n_inc=21, inc_lo=0.15, inc_hi=1.40, profile_maxiter=600,
         f = fitting.KinematicsFitter(
             config_path=f'ID{source_id}/config_kinematics.yaml')
         f.fit_all()
-        f.setup_noise_model()
-        f.current_stage = 0
-        f._assign_cfgs_for_stage(0)
-
-        all_cfg = f._mcmc_stage_cfg()
-        names, cfgs, _ = fitting.collect_free_scalar_params(all_cfg)
-        f._mcmc_names, f._mcmc_cfgs = names, cfgs
+        setup = f.prepare_mcmc(stage=0)
+        names, cfgs = setup['names'], setup['cfgs']
         map_vals = {n: float(c.tensor.detach()) for n, c in zip(names, cfgs)}
         i_map = map_vals['velocity.inc_v']
         v_map = map_vals['velocity.V_rot']

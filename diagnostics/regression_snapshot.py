@@ -58,23 +58,12 @@ def snapshot(sid, chain_path):
     f = fitting.KinematicsFitter(config_path=f'{sid}/config_kinematics.yaml')
     f.fit_all()
 
-    # Reproduce fit_MCMC's preamble well enough to evaluate the likelihood.
-    # NOTE: this hand-rolled block is exactly what Phase 2.1 replaces with
-    # prepare_mcmc(); when that lands, this becomes two lines and the snapshot
-    # must still match.
-    mc = f.config.get('mcmc') or {}
-    stage = mc.get('stage')
-    if stage is not None and int(stage) != f.current_stage:
-        f.current_stage = int(stage)
-        f._assign_cfgs_for_stage(f.current_stage)
-    f.mcmc_xy_iters = int(mc.get('xy_iters', 40))
-    f.mcmc_xy_tol = float(mc.get('xy_tol', 5e-3))
-    f._mcmc_names, f._mcmc_cfgs, _ = fitting.collect_free_scalar_params(f._mcmc_stage_cfg())
-    f.mcmc_param_names = list(f._mcmc_names) + list(f.mcmc_extra_param_names)
-    f._mcmc_prepare()
-    f._mcmc_priors = f._build_mcmc_priors()
+    # Everything fit_MCMC does before it touches emcee. This used to be a
+    # hand-rolled copy of that preamble; the fact that this file needed one is
+    # what motivated extracting it.
+    setup = f.prepare_mcmc()
 
-    adam = {n: float(c.tensor.detach().cpu()) for n, c in zip(f._mcmc_names, f._mcmc_cfgs)}
+    adam = {n: float(c.tensor.detach().cpu()) for n, c in zip(setup['names'], setup['cfgs'])}
     noise = {
         'sigma_R': float(f.sigma_R), 'sigma_C': float(f.sigma_C),
         'n_pix': int(f.n_mcmc_pix), 'n_eff': float(f.mcmc_n_eff),
@@ -88,7 +77,7 @@ def snapshot(sid, chain_path):
     names = [str(n) for n in d['param_names']]
     flat, flat_lp = chain.reshape(-1, chain.shape[-1]), lp.reshape(-1)
     theta_map = flat[int(np.nanargmax(flat_lp))]
-    assert names == list(f.mcmc_param_names), (names, list(f.mcmc_param_names))
+    assert names == setup['param_names'], (names, setup['param_names'])
 
     logp = float(f.log_probability(theta_map))
     chi2 = float(f._mcmc_last_chi2)
