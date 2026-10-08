@@ -3499,11 +3499,13 @@ class ImagesFitter(BaseFitter):
         '''
         return all the get_fitted_component
         '''
-        models = {}
+        # NOTE: all_sersic_models[filter] was never initialised, so the first
+        # assignment below raised KeyError and this method could not be called at
+        # all. A third dict, `models`, was built and then not returned.
         all_sersic_models = {}
         all_psf_models = {}
         for filter in self.all_filters:
-            models[filter] = {}
+            all_sersic_models[filter] = {}
             all_psf_models[filter] = {}
             for iid in self.direct_images[filter].keys(): 
                 sersic_models, psf_models = self.get_fitted_component(filter, iid)
@@ -3554,9 +3556,13 @@ class ImagesFitter(BaseFitter):
         psf_models = {}
         sersic_models = {}
 
+        # The registered group name is psf.<cid>.<filter> (see _setup_data); passing
+        # the bare cid made _get_model_params look up `p0_cfg`, which does not
+        # exist. Same for sersic below. Compare get_fitted_component, which has
+        # always built the dotted name correctly.
         psf_cid_list = self.config['psf'].keys()
         for psf_cid in psf_cid_list: 
-            psf_params = self._get_model_params(psf_cid)
+            psf_params = self._get_model_params(f'psf.{psf_cid}.{filter}')
             psf_model = galaxy.full_psf_model_torch(
                 xx, yy, psf_tensor, **psf_params
             )
@@ -3564,7 +3570,7 @@ class ImagesFitter(BaseFitter):
         
         sersic_cid_list = self.config['sersic'].keys()
         for sersic_cid in sersic_cid_list: 
-            sersic_params = self._get_model_params(sersic_cid)
+            sersic_params = self._get_model_params(f'sersic.{sersic_cid}.{filter}')
             sersic_model = galaxy.full_sersic_model_torch(
                 xx, yy, psf_tensor, **sersic_params
             )
@@ -3572,8 +3578,10 @@ class ImagesFitter(BaseFitter):
         
         return sersic_models, psf_models
     
-    def get_oversampled_fitted_model(self, filter=None, iid=None):
-        sersic_models, psf_models = self.get_oversampled_fitted_component(filter, iid)
+    def get_oversampled_fitted_model(self, filter=None, pid=None):
+        # The second positional of get_oversampled_fitted_component is `pid`, not
+        # `iid`; this used to pass an image id into the psf-id slot.
+        sersic_models, psf_models = self.get_oversampled_fitted_component(filter, pid)
         model = np.sum(list(sersic_models.values())+list(psf_models.values()), axis=0)
         return model
     
