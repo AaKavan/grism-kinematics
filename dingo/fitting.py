@@ -124,7 +124,7 @@ ALLOWED_PARAM_KEYS = {
     # V_rot and V_sini are alternative parameterisations of the same amplitude:
     # both are listed, but a given `velocity:` block defines exactly one, which is
     # why naming the wrong one is the most likely real override typo.
-    'velocity': {'V_rot', 'V_sini', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v'},
+    'velocity': {'V_rot', 'V_sini', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v', 'v_sys'},
     'image': {'dx', 'dy'},
     'sersic': {'I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta'},
     'psf': {'I_psf', 'x_psf', 'y_psf'},
@@ -1838,8 +1838,18 @@ class KinematicsFitter(BaseFitter):
 
         # velocity params
         # NOTE: overrides will be mutated during iteration
+        #
+        # v_sys is registered for every fit but FROZEN unless a config explicitly
+        # overrides it. The default is injected here rather than through the
+        # `default:` block on purpose: every shipped config has `fit: true` as its
+        # stage default, so letting v_sys pick that up would silently make it free
+        # everywhere and change every result.
+        velocity_raw = dict(self.config['velocity'])
+        velocity_raw.setdefault('v_sys', 0.0)
+        for ov in overrides:
+            ov.setdefault('velocity.v_sys', {'fit': False})
         self.velocity_cfg_list = build_param_config_dict_with_alias(
-            self.config['velocity'], defaults, overrides, prefix='velocity', device=self.device
+            velocity_raw, defaults, overrides, prefix='velocity', device=self.device
         )
 
         # dispersion R params
@@ -1868,6 +1878,33 @@ class KinematicsFitter(BaseFitter):
 
         check_unused_overrides(overrides, ('velocity', 'image.R', 'image.C'),
                                f'[{self.__class__.__name__}] {self.config_path}')
+
+        # v_sys is EXACTLY degenerate with the grism offsets when all four are
+        # free. A systemic shift of v moves the R trace along x and the C trace
+        # along y by the same amount (measured: 1 px = 71.6 km/s at 4.11 um), so
+        # setting image.R.dx = image.C.dy = -a*v reproduces it to the ~0.2%
+        # cross-term. It is identifiable ONLY because the free offsets span
+        # {R_x, R_y} while v_sys has a component along C_y outside that span --
+        # i.e. only because image.C.dx/dy are frozen. With all four free the fit
+        # gains an exactly flat direction and Adam will wander down it.
+        #
+        # The corollary is a systematic worth stating: identifiability rests on
+        # the C registration being right, and an error of d pixels there maps
+        # straight into 71.6*d km/s of v_sys.
+        for st, (vel, dR, dC) in enumerate(zip(self.velocity_cfg_list,
+                                               self.dispersion_R_cfg_list,
+                                               self.dispersion_C_cfg_list)):
+            if not vel['velocity.v_sys'].fit:
+                continue
+            free = [k for k, c in list(dR.items()) + list(dC.items())
+                    if k.endswith(('.dx', '.dy')) and c.fit]
+            if len(free) == 4:
+                raise ValueError(
+                    f'[{self.__class__.__name__}] {self.config_path}: stage {st+1} fits '
+                    f'velocity.v_sys with all four grism offsets free ({", ".join(sorted(free))}). '
+                    f'A systemic shift is exactly reproducible by image.R.dx together with '
+                    f'image.C.dy, so this adds a flat direction rather than a measurement. '
+                    f'Freeze image.C.dx and image.C.dy, as the current configs do.')
 
         # register into the generic param_config_lists
         # NOTE: every group must supply one cfg dict per fitting stage, otherwise
@@ -2535,7 +2572,13 @@ class KinematicsFitter(BaseFitter):
         lnL_rot = score(chi2_rot) if np.isfinite(chi2_rot) else -np.inf
 
         # null model: V_rot = 0, free offsets only
-        off_names = [n for n in names if n.startswith('image.')]
+        # v_sys joins the offsets in the null fit. A systemic shift and a velocity
+        # gradient both lower the R-minus-C objective -- that is precisely the
+        # confusion this statistic exists to resolve -- so leaving v_sys pinned
+        # while the rotating model had it free would hand the rotating model an
+        # advantage it did not earn and bias dlnL toward rotation.
+        off_names = [n for n in names
+                     if n.startswith('image.') or n == 'velocity.v_sys']
         with torch.no_grad():
             all_cfg[v_key].tensor.data.fill_(0.0)
 
@@ -2578,7 +2621,10 @@ class KinematicsFitter(BaseFitter):
         with torch.no_grad():
             self.loss()
 
-        k_extra = sum(1 for n in names if n.startswith('velocity.'))
+        # Degrees of freedom the null does WITHOUT. v_sys is re-optimised in both
+        # models, so it is not one of them.
+        k_extra = sum(1 for n in names
+                      if n.startswith('velocity.') and n != 'velocity.v_sys')
         dlnL = lnL_rot - lnL_null
         p_wilks = float(chi2_dist.sf(2.0*dlnL, k_extra)) if dlnL > 0 else 1.0
         out = {

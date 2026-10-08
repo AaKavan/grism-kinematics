@@ -10,7 +10,7 @@ LOG.addHandler(logging.NullHandler())  # Prevents "No handler found" warning if 
 
 #%% kinematics models in torch
 def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., theta_v=0.,
-                                   inc_v=0., V_sini=None, **kwargs):
+                                   inc_v=0., V_sini=None, v_sys=0., **kwargs):
     """
     TODO: change the name to torch
     Compute vx, vy, vz on the sky for a rotating disk using arctangent rotation curve.
@@ -33,11 +33,15 @@ def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., t
         Position angle of major axis (CCW from x-axis).
     inc : float (radians)
         Inclination angle (0=face-on, pi/2=edge-on)
+    v_sys : float or torch.Tensor
+        Systemic velocity offset in km/s, added to the whole field. See the note
+        at the return.
 
     Returns
     -------
     vz : torch.Tensor
-        Velocity components (same shape as x).
+        OBSERVED line-of-sight velocity (same shape as x), i.e. the rotation field
+        plus v_sys. With the default v_sys=0 this is the rotation field alone.
     """
     # Shift to center
     dx = x - x0_v
@@ -66,6 +70,24 @@ def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., t
 
     # Only vz (los velocity) is non-zero, vx = vy = 0
     vz = V_circ * (x_p / (r + 1e-8))
+
+    # Systemic velocity. It lives HERE, inside the velocity model, rather than
+    # being threaded through each Doppler site separately -- fitting.py computes
+    # lambda_obs in four places, and two of them (_xy_converged and
+    # _xy_converged_batch) re-implement the arithmetic as a CONVERGENCE TEST. If
+    # the test used a different lambda from the iteration it is testing, the fixed
+    # point would never look converged and log_likelihood would return -inf for
+    # every theta, killing the chain at walker initialisation with a message that
+    # says nothing about the cause. Returning it as part of vz makes that
+    # impossible by construction.
+    #
+    # lambda_rest is fixed from summary.z, so without this a spectroscopic
+    # redshift error has nowhere to go but into the rotation amplitude. A fitted
+    # v_sys of X km/s means summary.z is off by X/c*(1+z).
+    #
+    # Default 0.0: `vz + 0.0` is bit-identical to `vz` for every IEEE-754 float
+    # that occurs here, so the default-off path is provably a no-op.
+    vz = vz + v_sys
 
     # # Optionally return full velocity field (vx, vy = 0 for circular disk)
     # vx = torch.zeros_like(vz)

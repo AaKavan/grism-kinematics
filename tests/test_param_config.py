@@ -113,3 +113,26 @@ def test_yaml_scientific_notation_is_a_string_not_a_float():
     assert yaml.safe_load('a: -1e10')['a'] == '-1e10'
     assert isinstance(yaml.safe_load('a: -1e10')['a'], str)
     assert fitting.ensure_float_like('-1e10') == pytest.approx(-1e10)
+
+
+@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(os.path.dirname(p)))
+def test_v_sys_is_registered_but_frozen_in_every_shipped_config(cfg_path):
+    '''v_sys must exist everywhere and be free nowhere.
+
+    Every shipped config has `fit: true` as its stage default, so if v_sys were
+    injected through the default block it would become free in all of them and
+    silently change every result. It is built with fit=False explicitly instead.
+    '''
+    cfg = yaml.safe_load(open(cfg_path))
+    defaults = [st['default'] for st in cfg['fitting']]
+    overrides = [dict(st.get('override') or {}) for st in cfg['fitting']]
+    raw = dict(cfg['velocity'])
+    raw.setdefault('v_sys', 0.0)
+    for ov in overrides:
+        ov.setdefault('velocity.v_sys', {'fit': False})
+    stages = fitting.build_param_config_dict_with_alias(
+        raw, defaults, overrides, prefix='velocity')
+    for i, st in enumerate(stages):
+        assert 'velocity.v_sys' in st, f'stage {i+1} has no v_sys'
+        assert st['velocity.v_sys'].fit is False, f'stage {i+1} has v_sys FREE'
+        assert float(st['velocity.v_sys'].tensor) == 0.0
