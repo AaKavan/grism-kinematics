@@ -290,7 +290,7 @@ def main():
 
     # RA/Dec default to the EDR catalogue entry for --id, so an ID is enough
     if args.ra is None or args.dec is None:
-        from catalogs import lookup_source
+        from dingo.catalogs import lookup_source
         src = lookup_source(args.id, require_z=False)
         if args.ra is None:
             args.ra = src['ra']
