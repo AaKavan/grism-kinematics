@@ -258,7 +258,7 @@ def collect_free_scalar_params(cfgs: Dict[str, FitParamConfig]):
     Keeps only *scalar* fittable tensors. Dropped, each with a log line:
       - cfg.fit is False
       - cfg.tensor is not a Tensor (e.g. 'image.R.forward_model' holds a callable)
-      - cfg.tensor.numel() != 1 (e.g. 'result.emline_model' is an image array)
+      - cfg.tensor.numel() != 1 (an image-valued parameter, not a scalar)
     Aliased keys share one FitParamConfig, hence one tensor, so they collapse onto
     their first occurrence -- deduplicated by id(cfg.tensor) exactly as
     `_extract_tensors` does. Writing the shared tensor keeps every alias consistent.
@@ -1576,32 +1576,17 @@ class KinematicsFitter(BaseFitter):
             )
             cfg['image.C.forward_model'].tensor = self.fwd_models['C']
 
-        self.model_cfg = {'result.emline_model': FitParamConfig(
-            name='result.emline_model',
-            # Keep this diagnostic image parameter aligned with the staged input
-            # cutout. Older runs used a hard-coded 81x81 Pa-alpha cutout, but
-            # compact H-alpha runs may use 41x41 (r_fit=20).
-            value = np.ones_like(self.true_grism_R.cpu().numpy()) / np.sum(self.true_grism_R.cpu().numpy()),
-            lr = 0.05,
-            min=0, 
-            max=1e10, 
-            fit=True
-        )}
-
         unused_keys = set([key for stage in overrides for key in stage.keys()])
         if len(unused_keys)>0:
             LOG.warning(f'The following override keys are not used: {unused_keys}')
 
         # register into the generic param_config_lists
         # NOTE: every group must supply one cfg dict per fitting stage, otherwise
-        # fit_all() and _assign_cfgs_for_stage() index out of range. The emline
-        # model is stage-independent, so the same dict is repeated.
-        nstages = len(self.config['fitting'])
+        # fit_all() and _assign_cfgs_for_stage() index out of range.
         self.param_config_lists = {
             'velocity':       self.velocity_cfg_list,
             'dispersion_R':   self.dispersion_R_cfg_list,
             'dispersion_C':   self.dispersion_C_cfg_list,
-            'model':          [self.model_cfg]*nstages
         }
 
         # ─────────────────────────────
@@ -1669,13 +1654,17 @@ class KinematicsFitter(BaseFitter):
             self.x_C, self.y_C, self.true_grism_C, self.cutout_C
         )
         
-        # emline_model = self._get_model_params('model')['emline_model']
-        # # return torch.sum((self.image_R/torch.sum(self.image_R) - emline_model/torch.sum(emline_model))**2) + \
-        # #        torch.sum((self.image_C/torch.sum(self.image_C) - emline_model/torch.sum(emline_model))**2)
-        
-        # return torch.sum((self.image_R - emline_model)**2) + torch.sum((self.image_C - emline_model)**2)
-
-        # L2 loss between the two grism channels
+        # The statistic: the two rectifications of the SAME emission must agree.
+        # There is no model image here -- R and C are both data, remapped back to
+        # the direct-image frame through the velocity field, and what is minimised
+        # is their disagreement. That is what makes every parameter a measurement
+        # rather than a restatement of a light-profile prior.
+        #
+        # Consequence worth knowing: the objective says nothing about the source's
+        # total flux, so it is globally minimised at exactly 0 by any solution that
+        # rectifies BOTH grisms off the cutout (0 - 0 = 0). That state is only
+        # reachable when both grisms' offsets are free, and fit_report() checks for
+        # it; see _flux_retained().
         return torch.sum((self.image_R - self.image_C)**2)
 
     def _log(self, i: int, loss: torch.Tensor, cadence: int=500):
