@@ -222,3 +222,31 @@ def test_checkpoint_path_stays_inside_the_repo(cfg_path):
         pytest.skip('no checkpoint configured')
     resolved = os.path.normpath(os.path.join(REPO, 'data', ckpt))
     assert resolved.startswith(REPO + os.sep), f'{ckpt} resolves outside the repo'
+
+
+def test_an_unimplemented_rotation_curve_raises(tmp_path, monkeypatch):
+    '''`velocity.model` is not in ALLOWED_PARAM_KEYS, so it was dropped when the
+    cfgs were built and never read. Every config says `model: arctan` and would
+    have behaved identically saying `model: whatever` -- the arctangent curve is
+    hard-wired. A key that does nothing should not be silently accepted.
+    '''
+    import shutil
+    src = os.path.join(REPO, 'data', 'ID21636')
+    dst = tmp_path/'ID21636'
+    dst.mkdir()
+    cfg = yaml.safe_load(open(os.path.join(src, 'config_kinematics.yaml')))
+    cfg['velocity']['model'] = 'exponential'
+    (dst/'config_kinematics.yaml').write_text(yaml.safe_dump(cfg))
+    for f in ('R.fits', 'C.fits'):
+        p = os.path.join(src, f)
+        if os.path.exists(p):
+            os.symlink(p, dst/f)
+
+    cal = os.environ.get('GRISM_CAL_DIR') or os.path.join(os.path.dirname(REPO), 'grism_cal')
+    if not os.path.isdir(cal):
+        pytest.skip('no grism calibration directory')
+    monkeypatch.setenv('GRISM_CAL_DIR', cal)
+    monkeypatch.chdir(tmp_path)
+    from dingo import fitting as _f
+    with pytest.raises(NotImplementedError, match='arctan'):
+        _f.KinematicsFitter(config_path='ID21636/config_kinematics.yaml')

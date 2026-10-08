@@ -505,10 +505,15 @@ class BaseFitter(ABC):
         self.mode   = s['mode']
         self.r_fit = s.get('r_fit', None)
         if self.r_fit is not None:
-            LOG.warning(
-                f"[{self.__class__.__name__}] summary.r_fit is deprecated under (x,y) origin=(0,0). "
-                "Prefer explicit cutouts/centers in the config."
-            )
+            # NOT deprecated for kinematics, whatever this used to say. The cutout
+            # position depends on z through lambda_rest*(1+z), so an explicit one
+            # goes stale the moment a redshift is corrected -- it moved ~73 px for
+            # ID15665. Deriving it from r_fit keeps the two consistent by
+            # construction, which is why every kinematics config relies on it and
+            # says so. The warning fired on every single run and advised the
+            # opposite of what the configs deliberately do.
+            LOG.debug(f'[{self.__class__.__name__}] cutouts will be derived from '
+                      f'summary.r_fit={self.r_fit}')
 
 
         # ─────────────────────────────
@@ -2091,6 +2096,18 @@ class KinematicsFitter(BaseFitter):
         # `default:` block on purpose: every shipped config has `fit: true` as its
         # stage default, so letting v_sys pick that up would silently make it free
         # everywhere and change every result.
+        # `velocity.model` is not in ALLOWED_PARAM_KEYS, so it is silently dropped
+        # when the cfgs are built and nothing ever reads it -- every config says
+        # `model: arctan` and would behave identically saying anything else. The
+        # rotation curve is hard-wired in kinematics.arctangent_disk_velocity_model,
+        # so say so rather than accept a value that does nothing.
+        vmodel = self.config['velocity'].get('model', 'arctan')
+        if vmodel != 'arctan':
+            raise NotImplementedError(
+                f'velocity.model={vmodel!r}: the only rotation curve implemented is '
+                f'`arctan` (kinematics.arctangent_disk_velocity_model). This key was '
+                f'previously accepted and ignored.')
+
         velocity_raw = dict(self.config['velocity'])
         velocity_raw.setdefault('v_sys', 0.0)
         for ov in overrides:
@@ -2185,9 +2202,10 @@ class KinematicsFitter(BaseFitter):
                     self.lambda_rest
                 )
                 cutout = (int(cx)-r, int(cy)-r, 2*r+1, 2*r+1)
-                LOG.warning(
-                    f'[{self.__class__.__name__}] image.{pupil}.cutout is missing; '
-                    f'derived {cutout} from summary.r_fit={r}. Prefer an explicit cutout.'
+                LOG.info(
+                    f'[{self.__class__.__name__}] image.{pupil}.cutout derived as '
+                    f'{cutout} from summary.r_fit={r} and z={self.z} '
+                    f'(an explicit cutout would go stale if z were corrected)'
                 )
             else:
                 raise KeyError(
