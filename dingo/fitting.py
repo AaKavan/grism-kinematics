@@ -1156,6 +1156,32 @@ class BaseFitter(ABC):
         out[good] = vals
         return out
 
+    def mcmc_fingerprint(self):
+        """Everything outside (chain, param_names, nburn) that changes the posterior.
+
+        A resume used to validate only param_names, nburn and the array shapes, so
+        editing a prior, switching the likelihood mode, changing sigma_R/sigma_C or
+        re-reducing the input FITS and then resuming silently produced a chain that
+        was two different posteriors concatenated. Worse, the resumed log_prob[-1]
+        was computed under the OLD settings, so emcee's first acceptance tests
+        compared a new-settings proposal against a stale incumbent.
+        """
+        import hashlib
+        import json
+        mc = self.config.get('mcmc') or {}
+        h = hashlib.sha256()
+        for g in ('true_grism_R', 'true_grism_C'):
+            arr = getattr(self, g, None)
+            if arr is not None:
+                h.update(np.ascontiguousarray(arr.detach().cpu().numpy(), dtype=np.float64).tobytes())
+        return {
+            'priors': json.dumps(mc.get('priors') or {}, sort_keys=True, default=str),
+            'likelihood': self._mcmc_likelihood_mode(),
+            'noise': json.dumps(mc.get('noise') or {}, sort_keys=True, default=str),
+            'xy': f'{self.mcmc_xy_iters}/{self.mcmc_xy_tol}',
+            'data_sha256': h.hexdigest(),
+        }
+
     def prepare_mcmc(self, stage=None):
         '''Put the fitter in exactly the state fit_MCMC samples from, without sampling.
 
@@ -1415,6 +1441,7 @@ class BaseFitter(ABC):
         resume_state = None
         resume_chain = None
         resume_log_prob = None
+        resume_acceptance = None
         start_step = 0
         backend_meta_path = None
         if backend_path:
@@ -1504,6 +1531,10 @@ class BaseFitter(ABC):
                     saved_log_prob = np.asarray(saved['log_prob'])
                     saved_names = [str(x) for x in saved['param_names'].tolist()]
                     saved_nburn = int(saved['nburn'])
+                    saved_fp = (json.loads(str(saved['fingerprint']))
+                                if 'fingerprint' in saved.files else None)
+                    if 'acceptance_fraction' in saved.files:
+                        resume_acceptance = np.asarray(saved['acceptance_fraction'])
                     start_step = int(
                         saved['nsteps_done'] if 'nsteps_done' in saved.files
                         else saved_chain.shape[0]
@@ -1518,6 +1549,26 @@ class BaseFitter(ABC):
                         '[MCMC] existing checkpoint has a different nburn; '
                         'keep nburn fixed when resuming'
                     )
+                # Everything else that changes the posterior. Without this a
+                # resume across an edited prior, a switched likelihood mode, new
+                # sigma_R/sigma_C or re-reduced input FITS silently concatenated
+                # two different posteriors, and did so having compared the first
+                # new proposal against an incumbent scored under the old settings.
+                now_fp = self.mcmc_fingerprint()
+                if saved_fp is None:
+                    LOG.warning(
+                        '[MCMC] this checkpoint predates fingerprinting, so the '
+                        'priors, likelihood mode, noise settings and input data '
+                        'behind it cannot be verified against the current config. '
+                        'Resuming on trust.')
+                elif saved_fp != now_fp:
+                    changed = [k for k in now_fp if saved_fp.get(k) != now_fp[k]]
+                    raise RuntimeError(
+                        f'[MCMC] the checkpoint was written under different settings '
+                        f'({", ".join(changed)} changed), so resuming would join two '
+                        f'different posteriors. Use a new checkpoint path, or restore '
+                        f'the old settings. Changed:\n  ' + '\n  '.join(
+                            f'{k}: {saved_fp.get(k)!r} -> {now_fp[k]!r}' for k in changed))
                 if saved_chain.shape != (start_step, nwalkers, ndim):
                     raise RuntimeError(
                         f'[MCMC] existing checkpoint shape {saved_chain.shape} is not '
@@ -1565,6 +1616,17 @@ class BaseFitter(ABC):
             except Exception as exc:              # metadata is helpful, not fatal
                 LOG.warning(f'[MCMC] backend metadata write failed at step {ndone}: {exc}')
 
+        def _acceptance_for_save(sampler):
+            '''emcee's acceptance_fraction is naccepted/iteration, so it is 0/0 and
+            all-NaN whenever this process did no sampling -- which is exactly what
+            happens on a resume that finds the target already met. ID6170's saved
+            chain has an all-NaN acceptance for this reason and its convergence is
+            now unrecoverable. Keep the resumed value instead.'''
+            if sampler.iteration:
+                return sampler.acceptance_fraction
+            return (resume_acceptance if resume_acceptance is not None
+                    else np.full(nwalkers, np.nan))
+
         def _checkpoint(sampler, ndone):
             if backend is not None:
                 _write_backend_metadata(ndone)
@@ -1587,7 +1649,8 @@ class BaseFitter(ABC):
                     chain=chain_to_save, log_prob=log_prob_to_save,
                     param_names=np.array(self.mcmc_param_names, dtype=object),
                     nburn=nburn, nsteps_done=ndone,
-                    acceptance_fraction=sampler.acceptance_fraction,
+                    acceptance_fraction=_acceptance_for_save(sampler),
+                    fingerprint=np.array(json.dumps(self.mcmc_fingerprint()), dtype=object),
                     theta0=theta0)
                 os.replace(ckpt + '.tmp.npz', ckpt)
                 LOG.info(f'[MCMC] checkpoint at step {ndone} -> {ckpt}')
@@ -1669,7 +1732,15 @@ class BaseFitter(ABC):
             LOG.info(f'KeyboardInterrupt, stopping MCMC at step {ndone}')
             _checkpoint(sampler, ndone)
 
-        if backend is not None and ndone:
+        # Final flush. This used to be guarded by `backend is not None`, i.e. HDF5
+        # only, so the NPZ path -- which is what every shipped config uses -- wrote
+        # its tail only when ndone happened to be an exact multiple of
+        # checkpoint_every, or on Ctrl-C. The production settings divide evenly by
+        # arithmetic coincidence; any other total silently lost up to
+        # checkpoint_every steps. save_mcmc() writes the full chain afterwards, but
+        # the checkpoint is what survives a crash BETWEEN the loop and that call,
+        # and a chain has already been lost once to exactly that window.
+        if (ckpt or backend is not None) and ndone:
             _checkpoint(sampler, ndone)
 
         self.mcmc_sampler = sampler

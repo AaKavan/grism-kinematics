@@ -162,3 +162,45 @@ def test_prepare_mcmc_does_not_need_emcee(prepared, monkeypatch):
                         lambda: (_ for _ in ()).throw(ImportError('emcee missing')))
     f.prepare_mcmc()
     assert np.isfinite(f.log_probability(theta))
+
+
+@pytest.mark.data
+@pytest.mark.parametrize('prepared', SOURCES, indirect=True)
+def test_fingerprint_is_stable_and_sensitive(prepared):
+    '''The guard on a resume: it must not fire spuriously, and must fire on every
+    setting that changes the posterior. A resume used to check only param_names,
+    nburn and shapes, so editing a prior and resuming joined two posteriors.'''
+    sid, f, setup, theta = prepared
+    base = f.mcmc_fingerprint()
+    assert f.mcmc_fingerprint() == base, 'fingerprint must be deterministic'
+
+    mc = f.config['mcmc']
+    amp = [n for n in setup['param_names'] if n in ('velocity.V_rot', 'velocity.V_sini')][0]
+    old = dict(mc['priors'][amp])
+    mc['priors'][amp] = dict(old, max=float(old['max']) + 1.0)
+    assert f.mcmc_fingerprint()['priors'] != base['priors']
+    mc['priors'][amp] = old
+    assert f.mcmc_fingerprint() == base
+
+    old_noise = dict(mc.get('noise') or {})
+    mc['noise'] = dict(old_noise, sigma_R=1.234e-3)
+    assert f.mcmc_fingerprint()['noise'] != base['noise']
+    mc['noise'] = old_noise
+
+    f.mcmc_xy_iters = f.mcmc_xy_iters + 1
+    assert f.mcmc_fingerprint()['xy'] != base['xy']
+
+
+@pytest.mark.data
+@pytest.mark.parametrize('prepared', SOURCES, indirect=True)
+def test_fingerprint_tracks_the_input_data(prepared):
+    '''Re-reducing the FITS must invalidate a checkpoint too.'''
+    sid, f, setup, theta = prepared
+    base = f.mcmc_fingerprint()['data_sha256']
+    orig = f.true_grism_R.clone()
+    f.true_grism_R[0, 0] += 1e-6
+    try:
+        assert f.mcmc_fingerprint()['data_sha256'] != base
+    finally:
+        f.true_grism_R = orig
+    assert f.mcmc_fingerprint()['data_sha256'] == base
