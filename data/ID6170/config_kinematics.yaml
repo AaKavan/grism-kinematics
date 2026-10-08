@@ -52,8 +52,23 @@ fitting:
       max: 1e10
       fit: true
     override:
-      image.R.dx, image.R.dy, image.C.dx, image.C.dy:
+      image.R.dx, image.R.dy:
         lr: 0.5
+      # The C-grism offsets are FIXED. Shifting both grisms by the same amount and
+      # moving (x0_v, y0_v) by the same amount translates the rectified images
+      # together and leaves R-C unchanged, so (dx_R, dx_C, x0_v) and
+      # (dy_R, dy_C, y0_v) each contain an exactly flat direction. Fixing C removes
+      # it: the R offsets carry the relative registration, (x0_v, y0_v) the absolute
+      # one, in the C frame.
+      #
+      # It also closes a worse hole. loss() = sum((image_R - image_C)**2) constrains
+      # no flux, so it is globally minimised at EXACTLY 0 by a solution that maps
+      # both grisms off the cutout. With all four offsets free that minimum is
+      # reachable -- measured on ID6170: driving them to 400 px gives loss = 0
+      # against 0.0933 at the fit. Freezing C makes it unreachable, since moving R
+      # alone leaves C's flux in place and the loss goes UP.
+      image.C.dx, image.C.dy:
+        fit: false
       velocity.theta_v:
         fit: true
       # R_v is a turnover RADIUS: without this floor Adam happily returns a
@@ -74,6 +89,21 @@ fitting:
       max: 1e10
       fit: true
     override:
+      # The C-grism offsets are FIXED. Shifting both grisms by the same amount and
+      # moving (x0_v, y0_v) by the same amount translates the rectified images
+      # together and leaves R-C unchanged, so (dx_R, dx_C, x0_v) and
+      # (dy_R, dy_C, y0_v) each contain an exactly flat direction. Fixing C removes
+      # it: the R offsets carry the relative registration, (x0_v, y0_v) the absolute
+      # one, in the C frame.
+      #
+      # It also closes a worse hole. loss() = sum((image_R - image_C)**2) constrains
+      # no flux, so it is globally minimised at EXACTLY 0 by a solution that maps
+      # both grisms off the cutout. With all four offsets free that minimum is
+      # reachable -- measured on ID6170: driving them to 400 px gives loss = 0
+      # against 0.0933 at the fit. Freezing C makes it unreachable, since moving R
+      # alone leaves C's flux in place and the loss goes UP.
+      image.C.dx, image.C.dy:
+        fit: false
       velocity.theta_v:
         fit: false
 
@@ -82,6 +112,13 @@ fitting:
 # ----------------------------------------------------------------------------
 
 mcmc:
+  # `gaussian`: per-pixel variance and effective pixel count derived from the
+  # rectification operator itself (see KinematicsFitter.setup_noise_model), with a
+  # fitted noise scale ln_f as a check. `adam` reproduces the optimizer's
+  # unweighted SSE with a flat fixed variance and is kept only for comparison.
+  likelihood: gaussian
+  resume: true
+  checkpoint_every: 500
   # Stage 1 (index 0): stage 2 freezes theta_v for the polish, so sampling there
   # would silently drop it from the free set.
   stage: 0
@@ -93,10 +130,13 @@ mcmc:
   xy_tol: 5e-3
   log_cadence: 200
   seed: 42
-  checkpoint: ../../results/ID6170/ID6170_chain_checkpoint.npz
+  checkpoint: ../results/ID6170/ID6170_chain_checkpoint.npz
   checkpoint_every: 500
 
   noise:
+    # `auto`: take the correlation area from the rectification operator rather
+    # than assuming one. See setup_noise_model.
+    corr_area: auto
     fit_ln_f: true
 
   init_scatter:

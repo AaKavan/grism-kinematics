@@ -57,8 +57,15 @@ fitting:
       max: 1e10
       fit: true
     override:
-      image.R.dx, image.R.dy, image.C.dx, image.C.dy: 
+      image.R.dx, image.R.dy:
         lr: 0.5
+      # The C-grism offsets are FIXED: with all four free, (dx_R, dx_C, x0_v) and
+      # (dy_R, dy_C, y0_v) each contain an exactly flat direction, and the
+      # R-minus-C objective is additionally minimised at EXACTLY 0 by a solution
+      # that maps both grisms off the cutout (measured on ID6170: loss = 0 at a
+      # 400 px offset, against 0.0933 at the fit).
+      image.C.dx, image.C.dy:
+        fit: false
       # image.R.dx: 
       #   # fit: false
       # image.R.dy: 
@@ -82,6 +89,21 @@ fitting:
       max: 1e10
       fit: true
     override:
+      # The C-grism offsets are FIXED. Shifting both grisms by the same amount and
+      # moving (x0_v, y0_v) by the same amount translates the rectified images
+      # together and leaves R-C unchanged, so (dx_R, dx_C, x0_v) and
+      # (dy_R, dy_C, y0_v) each contain an exactly flat direction. Fixing C removes
+      # it: the R offsets carry the relative registration, (x0_v, y0_v) the absolute
+      # one, in the C frame.
+      #
+      # It also closes a worse hole. loss() = sum((image_R - image_C)**2) constrains
+      # no flux, so it is globally minimised at EXACTLY 0 by a solution that maps
+      # both grisms off the cutout. With all four offsets free that minimum is
+      # reachable -- measured on ID6170: driving them to 400 px gives loss = 0
+      # against 0.0933 at the fit. Freezing C makes it unreachable, since moving R
+      # alone leaves C's flux in place and the loss goes UP.
+      image.C.dx, image.C.dy:
+        fit: false
       velocity.theta_v:
         fit: false
       # velocity.inc_v:
@@ -95,6 +117,13 @@ fitting:
 # Optional block, read only by BaseFitter.fit_MCMC(). Ignored by fit_gradient().
 
 mcmc:
+  # `gaussian`: per-pixel variance and effective pixel count derived from the
+  # rectification operator itself (see KinematicsFitter.setup_noise_model), with a
+  # fitted noise scale ln_f as a check. `adam` reproduces the optimizer's
+  # unweighted SSE with a flat fixed variance and is kept only for comparison.
+  likelihood: gaussian
+  resume: true
+  checkpoint_every: 500
   # Sample the free-parameter set of stage 1 (index 0): stage 2 freezes theta_v for
   # the final polish, so sampling there would silently drop it. Stages share the
   # parameter tensors, so the values fitted by fit_all() carry over regardless.
@@ -108,7 +137,7 @@ mcmc:
   seed: 42
   # Written every checkpoint_every steps and atomically replaced, so a reboot or a
   # kill costs at most that many steps instead of the whole multi-hour chain.
-  checkpoint: ../../results/ID15665/ID15665_chain_checkpoint_noincprior.npz
+  checkpoint: ../results/ID15665/ID15665_chain_checkpoint_noincprior.npz
   checkpoint_every: 500
 
   noise:

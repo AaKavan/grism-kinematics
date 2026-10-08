@@ -190,3 +190,35 @@ def test_inherited_bounds_survive_yaml_string_scientific_notation():
     ])
     assert float(cfgs[1]['velocity.R_v'].min) == pytest.approx(1e-3)
     assert float(cfgs[1]['velocity.R_v'].max) == pytest.approx(1e10)
+
+
+@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(os.path.dirname(p)))
+def test_C_grism_offsets_are_frozen_in_every_stage(cfg_path):
+    '''image.C.dx/dy must be fixed in every stage of every config.
+
+    Two reasons, and the second is the serious one. With all four offsets free,
+    (dx_R, dx_C, x0_v) and (dy_R, dy_C, y0_v) each contain an exactly flat
+    direction. And the R-minus-C objective constrains no flux, so it is globally
+    minimised at EXACTLY 0 by a solution that maps both grisms off the cutout --
+    measured on ID6170, where a 400 px offset gives loss = 0 against 0.0933 at the
+    fit. Freezing C makes that unreachable: moving R alone leaves C's flux in
+    place and the loss goes up. It is also what makes velocity.v_sys identifiable.
+    '''
+    cfg = yaml.safe_load(open(cfg_path))
+    for i, stage in enumerate(cfg['fitting']):
+        ov = stage.get('override') or {}
+        frozen = any('image.C' in key and (val or {}).get('fit') is False
+                     for key, val in ov.items())
+        assert frozen, f'stage {i+1} leaves image.C.dx/dy free'
+
+
+@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(os.path.dirname(p)))
+def test_checkpoint_path_stays_inside_the_repo(cfg_path):
+    '''Paths resolve from data/, so ../results is right and ../../results escapes
+    the repository entirely. Three configs had the latter.'''
+    mc = yaml.safe_load(open(cfg_path)).get('mcmc') or {}
+    ckpt = mc.get('checkpoint')
+    if not ckpt:
+        pytest.skip('no checkpoint configured')
+    resolved = os.path.normpath(os.path.join(REPO, 'data', ckpt))
+    assert resolved.startswith(REPO + os.sep), f'{ckpt} resolves outside the repo'
