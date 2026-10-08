@@ -99,6 +99,12 @@ def cmd_floor(args):
     f, names = build_fitter(args.config)
     theta_true = current_theta(f, names)
     n_pix, var_base = f.n_mcmc_pix, f.mcmc_var_base
+    # The REAL data's background sigmas. The mock below is noiseless, so letting
+    # setup_noise_model re-estimate them would give sigma = 0, an all-zero variance
+    # map and an empty mask. The comparison this test makes is SSE on a noiseless
+    # mock against N*var_base from the real data, so the real sigmas are the right
+    # ones to re-freeze with.
+    sigma_R0, sigma_C0 = f.sigma_R, f.sigma_C
     LOG.info(f'N_pix={n_pix}  var_base={var_base:.6g}  N*var_base={n_pix*var_base:.6g}')
 
     f._reset_state()
@@ -113,6 +119,12 @@ def cmd_floor(args):
         f.make_mock_data(intensity=source, theta=truth, sigma_R=0.0, sigma_C=0.0,
                          inplace=True)
         f.set_params_dict(truth)
+        # make_mock_data swaps the data under the frozen noise model and calls
+        # invalidate_noise_model, so the mask has to be re-frozen on the mock.
+        # cmd_single and cmd_ensemble both do this; cmd_floor never did, so it
+        # raised "call setup_noise_model() before log_likelihood()" and this test
+        # has never actually run.
+        f.setup_noise_model(sigma_R=sigma_R0, sigma_C=sigma_C0)
         f.log_likelihood(**{'noise.ln_f': 0.0})
         sse = float(torch.sum(((f.image_R - f.image_C)[f.mcmc_mask])**2))
         LOG.info(f'[{tag}] SSE_floor={sse:.6g}  ratio to N*var_base = {sse/(n_pix*var_base):.4f}'
@@ -325,7 +337,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('test', choices=['floor', 'single', 'ensemble'])
-    ap.add_argument('--id', default=DEFAULT_ID)
+    ap.add_argument('--id', default=DEFAULT_ID,
+                    help='source id, with or without the ID prefix')
     ap.add_argument('--config', default=None,
                     help='defaults to ID<id>/config_kinematics.yaml under --workdir')
     ap.add_argument('--workdir', default=DEFAULT_WORKDIR)
@@ -339,6 +352,9 @@ def main():
     ap.add_argument('--truth-override', nargs='*', metavar='KEY=VALUE',
                     help='force theta_true entries, e.g. velocity.inc_v=0.6412')
     args = ap.parse_args()
+    # Accept 15665 or ID15665: the config path below adds the prefix, so passing
+    # the prefixed form used to build 'IDID15665/config_kinematics.yaml'.
+    args.id = str(args.id).removeprefix('ID')
     if args.config is None:
         args.config = f'ID{args.id}/config_kinematics.yaml'
     # absolute before the chdir below, and one folder per source
