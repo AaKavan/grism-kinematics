@@ -3,3 +3,10 @@ __pycache__/
 *.egg-info/
 .ipynb_checkpoints/
 .DS_Store
+
+# MCMC products. Chains are 13-150 MB each and are regenerable from the config
+# plus the staged FITS; the config is the artifact worth versioning, not the
+# chain. Files already tracked stay tracked -- this only stops new ones.
+results/**/*.npz
+results/**/*.log
+results/**/*.png

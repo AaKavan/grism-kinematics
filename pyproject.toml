@@ -10,15 +10,25 @@ authors = [
   {name = "Yichen Liu", email = "yichenliu@arizona.edu"}
 ]
 requires-python = ">=3.12"
+readme = "README.md"
+license = "MIT"
+# 3.12 is a hard floor, not a preference: fitting.py uses nested same-quote
+# f-strings (e.g. :501, :538, :636, :1690), which are a syntax error before 3.12.
 dependencies = [
   "numpy",
   "torch",
   "astropy",
   "matplotlib",
-  "reproject",
+  "scipy",
+  "pyyaml",
 ]
-readme = "README.md"
-license = "MIT"
+
+[project.optional-dependencies]
+# emcee and corner are imported lazily, each behind its own fallback
+# (fitting._import_emcee, plot._corner_fallback), so the gradient-fitting path
+# works without them. They are required for fit_MCMC and the corner plots.
+mcmc = ["emcee", "corner"]
+test = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["dingo"]
@@ -26,3 +36,11 @@ include = ["dingo"]
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
 local_scheme = "node-and-date"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `slow` marks the tests that build a real KinematicsFitter from staged FITS and
+# run an Adam fit (~30 s each). Deselect with `-m "not slow"` for the fast suite.
+markers = [
+  "slow: needs staged data and a real fit",
+]
