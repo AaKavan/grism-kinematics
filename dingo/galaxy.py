@@ -1,3 +1,10 @@
+"""Sersic and point-source surface-brightness models, numpy and torch.
+
+Used by ImagesFitter and by the forward grism models. The KINEMATICS path does
+not use any of this: KinematicsFitter.loss compares two rectified data images and
+never builds a light model, which is what frees it from a morphology prior.
+"""
+
 import torch
 import torch.nn.functional as F
 import numpy as np

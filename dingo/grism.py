@@ -1,3 +1,17 @@
+"""NIRCam WFSS calibration I/O: trace and dispersion polynomials.
+
+Reads the polynomial coefficient tables off disk ($GRISM_CAL_DIR) and evaluates
+them in numpy. Pure numpy and no gradients -- utils.get_grism_model_torch wraps
+the output in the differentiable closure the fitter actually calls.
+
+The polynomials are position-dependent on the detector, but every fit evaluates
+them at (1024, 1024). Measured: the trace OFFSET varies by up to 1.9 px across
+the detector, which the fitted image.*.dx/dy absorb, while the dispersion SCALE
+-- the part that maps 1:1 into V*sin(i) -- varies by at most 0.75% corner to
+corner, i.e. +-1.5 km/s on a 200 km/s rotation. That is well inside the
+statistical error, so the fixed reference position is a justified approximation.
+"""
+
 # Grism calibration functions 
 
 import os

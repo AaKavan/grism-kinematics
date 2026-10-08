@@ -1,3 +1,13 @@
+"""FFT convolution, resampling, and the differentiable grism trace.
+
+get_grism_model_torch is the hinge of the whole code: it turns the numpy
+calibration polynomials into a torch closure (x, y, lambda) -> (x_G, y_G), or its
+inverse, that autograd can differentiate through. Everything else here is
+support -- PSF shifts, resampling, pixel scales.
+
+Cosmology for the whole package is Planck18, imported here as `cosmo`.
+"""
+
 import torch
 import torch.nn.functional as F
 import numpy as np

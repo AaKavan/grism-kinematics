@@ -1,3 +1,23 @@
+"""Config loading, staged optimisation, and posterior sampling.
+
+Three classes:
+
+    BaseFitter       config -> parameters -> staged Adam/LBFGS -> emcee. Holds the
+                     prior machinery, the MCMC plumbing and fit_report().
+    KinematicsFitter the R+C joint fitter. Its loss() rectifies BOTH observed
+                     grisms back to the direct-image frame through the velocity
+                     field and minimises their disagreement -- there is no model
+                     image. setup_noise_model() derives the per-pixel variance and
+                     the correlation area from that rectification operator rather
+                     than assuming them.
+    ImagesFitter     direct-image Sersic + PSF fitting. A separate lineage; the
+                     kinematics path does not touch it.
+
+Call order for a fit: fit_all() -> fit_report() -> prepare_mcmc() -> fit_MCMC().
+prepare_mcmc() is everything fit_MCMC does before it touches emcee, so a saved
+chain can be scored without re-running one; load_chain() is its counterpart.
+"""
+
 import torch
 import logging
 import json

@@ -1,3 +1,9 @@
+"""Matplotlib helpers for fit results, chains and corner plots.
+
+Display only -- nothing here feeds a fitted number. corner is imported lazily
+with a fallback, so it is an optional dependency.
+"""
+
 # plot.py
 
 from astropy.stats import sigma_clipped_stats
