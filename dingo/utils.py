@@ -10,15 +10,11 @@ from astropy.cosmology import Planck18 as cosmo
 from . import grism
 
 LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
-if not LOG.handlers:
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-        datefmt='%H:%M:%S'
-    )
-    console_handler.setFormatter(formatter)
-    LOG.addHandler(console_handler)
+# A library attaches a NullHandler and nothing else: the APPLICATION decides
+# where logs go. This module used to install its own StreamHandler, so once a
+# caller ran logging.basicConfig() every record was printed twice -- once by
+# this handler and once by the root one it also propagates to.
+LOG.addHandler(logging.NullHandler())
 
 #%% utility functions in numpy
 
