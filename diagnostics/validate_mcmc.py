@@ -145,11 +145,23 @@ def cmd_single(args):
         f.loss()
     source = f.image_R.detach().clone()
 
-    # displace theta_true a few sigma from the MAP so recovery is a real test
-    offsets = {'velocity.V_rot': 25.0, 'velocity.R_v': 0.25, 'velocity.x0_v': 0.6,
+    # displace theta_true a few sigma from the MAP so recovery is a real test.
+    #
+    # The amplitude key has to be looked up, not assumed. This dict used to name
+    # velocity.V_rot and be read through offsets.get(n, 0.0), so under the V_sini
+    # parameterisation it displaced the amplitude by ZERO -- no error, no warning,
+    # the recovery test simply stopped testing the one parameter the fit exists to
+    # measure. ID15665, the source this validator is usually pointed at, is the
+    # V_sini config.
+    offsets = {'velocity.R_v': 0.25, 'velocity.x0_v': 0.6,
                'velocity.y0_v': -0.6, 'velocity.theta_v': 0.06, 'velocity.inc_v': -0.04,
                'image.R.dx': 0.15, 'image.R.dy': -0.15,
                'image.C.dx': 0.15, 'image.C.dy': -0.15}
+    amp = fitting.amplitude_key(names)
+    if amp is None:
+        raise KeyError(f'no rotation amplitude among {names}')
+    offsets[amp] = 25.0
+    LOG.info(f'displacing the amplitude {amp} by {offsets[amp]:+g} km/s')
     theta_true = {n: theta_map[n] + offsets.get(n, 0.0) for n in names}
 
     f.make_mock_data(intensity=source, theta=theta_true, seed=args.seed, inplace=True)

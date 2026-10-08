@@ -133,6 +133,43 @@ ALLOWED_PARAM_KEYS = {
 }
 
 
+# Failures that genuinely mean "this walker is impossible" rather than "the code
+# is broken". Anything else must propagate: log_probability used to catch every
+# Exception and return -inf at DEBUG level, so a shape mismatch, a device
+# mismatch or a typo'd attribute was indistinguishable from an out-of-support
+# proposal -- the chain just quietly filled with -inf.
+NUMERICAL_FAILURES = (FloatingPointError, ZeroDivisionError, OverflowError)
+_REPORTED_LIKELIHOOD_FAILURES = set()
+
+
+def _likelihood_failed(exc, where):
+    """Log the first occurrence of each distinct failure at WARNING, then be quiet."""
+    key = (type(exc).__name__, str(exc)[:200])
+    if key not in _REPORTED_LIKELIHOOD_FAILURES:
+        _REPORTED_LIKELIHOOD_FAILURES.add(key)
+        LOG.warning(f'[MCMC] {where} returned -inf because the likelihood raised '
+                    f'{type(exc).__name__}: {exc}. Further identical failures are '
+                    f'logged at DEBUG.')
+    else:
+        LOG.debug(f'[MCMC] {where}: {type(exc).__name__}: {exc}')
+
+
+AMPLITUDE_KEYS = ('velocity.V_rot', 'velocity.V_sini')
+
+
+def amplitude_key(names):
+    """Which rotation-amplitude parameter this fit uses, or None.
+
+    V_rot and V_sini are alternative parameterisations of the same quantity and a
+    config defines exactly one, so anything reading the amplitude out of a chain
+    or a cfg dict has to ask rather than assume. Assuming V_rot is how the
+    diagnostics came to raise KeyError on every V_sini run -- and, worse, how the
+    ensemble validator silently stopped displacing the amplitude at all.
+    """
+    have = set(names)
+    return next((k for k in AMPLITUDE_KEYS if k in have), None)
+
+
 def check_unused_overrides(overrides, prefixes, what):
     '''Raise if any `override:` key was never consumed by a parameter.
 
@@ -1080,8 +1117,8 @@ class BaseFitter(ABC):
         extras = self._mcmc_set_theta(theta)
         try:
             ll = self.log_likelihood(**extras)
-        except Exception as exc:
-            LOG.debug(f'[MCMC] likelihood failed at {theta}: {exc}')
+        except NUMERICAL_FAILURES as exc:
+            _likelihood_failed(exc, 'log_probability')
             return -np.inf
         if not np.isfinite(ll):
             return -np.inf
@@ -1101,10 +1138,18 @@ class BaseFitter(ABC):
         good = np.isfinite(lp)
         if not good.any():
             return out
+        if not hasattr(self, 'log_likelihood_batch'):
+            # Only KinematicsFitter implements the batched path. Any other
+            # subclass run with vectorize: true used to raise AttributeError
+            # straight into the blanket except below, so every walker came back
+            # -inf and the chain froze with nothing in the log above DEBUG.
+            raise NotImplementedError(
+                f'{type(self).__name__} has no log_likelihood_batch(); run with '
+                f'mcmc.vectorize: false, or implement it.')
         try:
             ll = self.log_likelihood_batch(thetas[good])
-        except Exception as exc:
-            LOG.debug(f'[MCMC] batched likelihood failed: {exc}')
+        except NUMERICAL_FAILURES as exc:
+            _likelihood_failed(exc, 'log_probability_batch')
             return out
         vals = lp[good] + np.asarray(ll, dtype=float)
         vals[~np.isfinite(vals)] = -np.inf
@@ -1196,8 +1241,7 @@ class BaseFitter(ABC):
         # config may start V_rot negative on purpose (the sample's rotation sense
         # varies), while the prior is one-signed to kill that exact mirror mode.
         # Map onto the positive branch rather than refusing to sample.
-        _amp = next((n for n in ('velocity.V_rot', 'velocity.V_sini')
-                     if n in self.mcmc_param_names), None)
+        _amp = amplitude_key(self.mcmc_param_names)
         try:
             iv = self.mcmc_param_names.index(_amp) if _amp else None
             it = self.mcmc_param_names.index('velocity.theta_v')
@@ -2202,6 +2246,14 @@ class KinematicsFitter(BaseFitter):
         # correlation area per output pixel = sum_j Cov_ij / Cov_ii
         corr_num = self.sigma_R**2*cov_R + self.sigma_C**2*cov_C
         area = torch.where(mask, corr_num/var_map.clamp_min(1e-30), torch.ones_like(var_map))
+        if n_pix == 0:
+            raise ValueError(
+                f'the noise-model mask is empty: no pixel has coverage above '
+                f'cov_threshold={cov_threshold} in BOTH grisms with a positive '
+                f'variance. sigma_R={self.sigma_R:.5g}, sigma_C={self.sigma_C:.5g}. '
+                f'Either the two rectifications do not overlap at these parameters '
+                f'(check image.*.dx/dy and the cutouts), or the background sigma '
+                f'came out as zero. This used to surface as ZeroDivisionError.')
         corr_cfg = nc.get('corr_area', 'auto')
         if isinstance(corr_cfg, str) and corr_cfg.lower() == 'auto':
             n_eff = float(torch.sum(1.0/area[mask]))
@@ -2562,9 +2614,9 @@ class KinematicsFitter(BaseFitter):
             return self._profiled_lnL(chi2) if profile else self._chi2_to_lnL(chi2, ln_f_fixed)
 
         saved = {n: float(all_cfg[n].tensor.detach().cpu()) for n in names}
-        v_key = next((k for k in ('velocity.V_rot', 'velocity.V_sini') if k in all_cfg), None)
+        v_key = amplitude_key(all_cfg)
         if v_key is None:
-            raise KeyError('no velocity.V_rot or velocity.V_sini parameter in this stage')
+            raise KeyError(f'this stage has neither of {AMPLITUDE_KEYS}')
 
         # rotating model at the current parameters
         ll = self.log_likelihood(**{'noise.ln_f': ln_f_fixed})

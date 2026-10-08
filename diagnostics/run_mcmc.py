@@ -134,8 +134,20 @@ def main():
     # ── 5. Derived posteriors ───────────────────────────────────────────────
     kpc_per_pix = kpc_per_pixel(fitter.z)
     names = list(fitter.mcmc_param_names)
-    v_rot = chain[:, names.index('velocity.V_rot')]
+    # Under V_sini this used to be a bare ValueError that killed the whole derived
+    # section, including M_dyn. Derive V_rot from whichever amplitude was sampled.
+    amp = fitting.amplitude_key(names)
+    if amp is None:
+        raise KeyError(f'no rotation amplitude among {names}')
+    inc = chain[:, names.index('velocity.inc_v')]
+    if amp == 'velocity.V_sini':
+        v_sini = chain[:, names.index(amp)]
+        v_rot = v_sini/np.sin(np.clip(inc, 1e-6, None))
+    else:
+        v_rot = chain[:, names.index(amp)]
+        v_sini = v_rot*np.sin(inc)
     r_v = chain[:, names.index('velocity.R_v')]
+    LOG.info(f'  amplitude sampled as {amp}')
     LOG.info(f'--- derived (kpc/pixel = {kpc_per_pix:.3f} at z={fitter.z}) ---')
     lo, med, hi = np.percentile(r_v*kpc_per_pix, [16, 50, 84])
     LOG.info(f'  R_v [kpc]            {med:12.4f}  -{med-lo:.4f} +{hi-med:.4f}')
@@ -150,7 +162,8 @@ def main():
         param_names=np.array(names, dtype=object),
         kpc_per_pix=kpc_per_pix,
         R_v_kpc=r_v*kpc_per_pix,
-        Vsini=v_rot*np.sin(chain[:, names.index('velocity.inc_v')]),
+        Vsini=v_sini,
+        V_rot=v_rot,
     )
 
     # ── 6. Plots ────────────────────────────────────────────────────────────
@@ -180,9 +193,10 @@ def main():
 
 def kpc_per_pixel(z, arcsec_per_pixel=0.063):
     '''Angular scale of a NIRCam long-wavelength pixel at redshift z.'''
-    from astropy.cosmology import FlatLambdaCDM
-    import astropy.units as u
-    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
+    # One cosmology for the whole repo. This used to be FlatLambdaCDM(H0=70, Om0=0.3)
+    # while dingo/utils.py used Planck18, so a kpc or a dynamical mass depended on
+    # which code path produced it.
+    from dingo.utils import cosmo
     d_a = cosmo.angular_diameter_distance(z).to(u.kpc).value
     return arcsec_per_pixel*d_a/206265.0
 

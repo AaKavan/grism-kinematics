@@ -71,9 +71,14 @@ def scan(source_id, n_inc=21, inc_lo=0.15, inc_hi=1.40, profile_maxiter=600,
         setup = f.prepare_mcmc(stage=0)
         names, cfgs = setup['names'], setup['cfgs']
         map_vals = {n: float(c.tensor.detach()) for n, c in zip(names, cfgs)}
+        # Works in either parameterisation: the scan is over V*sin(i) held fixed,
+        # which is the quantity the data constrain, so only the key differs.
+        amp = fitting.amplitude_key(names)
+        if amp is None:
+            raise KeyError(f'no rotation amplitude among {names}')
         i_map = map_vals['velocity.inc_v']
-        v_map = map_vals['velocity.V_rot']
-        vsini = v_map*np.sin(i_map)
+        vsini = map_vals[amp] if amp == 'velocity.V_sini' else map_vals[amp]*np.sin(i_map)
+        v_map = vsini/np.sin(i_map)
         LOG.info(f'ID{source_id} MAP: V_rot={v_map:.2f} inc={i_map:.4f} '
                  f'({np.rad2deg(i_map):.2f} deg) Vsini={vsini:.2f} '
                  f'R_v={map_vals["velocity.R_v"]:.3f} px')
@@ -88,7 +93,8 @@ def scan(source_id, n_inc=21, inc_lo=0.15, inc_hi=1.40, profile_maxiter=600,
         for k, inc in enumerate(incs):
             restore()
             f.set_params_dict({'velocity.inc_v': float(inc),
-                               'velocity.V_rot': float(vsini/np.sin(inc))})
+                               amp: float(vsini if amp == 'velocity.V_sini'
+                                          else vsini/np.sin(inc))})
             cond[k] = masked_sse(f)
         restore()
 
@@ -101,7 +107,8 @@ def scan(source_id, n_inc=21, inc_lo=0.15, inc_hi=1.40, profile_maxiter=600,
         for k, inc in enumerate(incs):
             restore()
             f.set_params_dict({'velocity.inc_v': float(inc),
-                               'velocity.V_rot': float(vsini/np.sin(inc))})
+                               amp: float(vsini if amp == 'velocity.V_sini'
+                                          else vsini/np.sin(inc))})
             inc_cfg.fit = False              # propagates to tensor.requires_grad
             try:
                 f.current_stage = 0
@@ -125,7 +132,7 @@ def scan(source_id, n_inc=21, inc_lo=0.15, inc_hi=1.40, profile_maxiter=600,
         LOG.info(f'\n{"inc rad":>9}{"inc deg":>9}{"V_rot@Vsini":>13}'
                  f'{"dchi2 cond":>12}{"dchi2 prof":>12}{"V_rot fitted":>14}')
         for k, inc in enumerate(incs):
-            vfit = prof_pars[k].get('velocity.V_rot', np.nan) if k < len(prof_pars) else np.nan
+            vfit = prof_pars[k].get(amp, np.nan) if k < len(prof_pars) else np.nan
             LOG.info(f'{inc:>9.4f}{np.rad2deg(inc):>9.2f}{vsini/np.sin(inc):>13.1f}'
                      f'{d_cond[k]:>12.2f}{d_prof[k]:>12.2f}{vfit:>14.1f}')
 

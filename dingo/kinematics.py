@@ -336,6 +336,11 @@ def iteratively_find_xy(x_init, y_init, cutout, lambda_rest, x_G, y_G,
     x = x_init.detach()
     y = y_init.detach()
     converged = False
+    if maxiter < 1:
+        # vz_new and k would be undefined below, giving a NameError from a config
+        # that merely asked for no iterations.
+        raise ValueError(f'iteratively_find_xy needs maxiter >= 1, got {maxiter} '
+                         f'(check mcmc.xy_iters)')
     for k in range(maxiter):
         vz_new = arctangent_disk_velocity_model(x-dx, y-dy, **kwargs)
         lambda_new = lambda_rest * (1.0 + vz_new / c)

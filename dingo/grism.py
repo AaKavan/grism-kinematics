@@ -129,6 +129,27 @@ def grism_conf_preparation(x0 = 1024, y0 = 1024, pupil = 'R',
 
 #%% Modified from Xiaojing's or Fengwu's code
 
+# Nominal NIRCam passbands, microns. See the note in load_nircam_wfss_model: this
+# is only used to flag on-detector wavelengths and never enters a fitted value.
+WRANGE_BY_FILTER = {
+    'F277W':  (2.4, 3.1),
+    'F322W2': (2.4, 4.1),
+    'F335M':  (3.2, 3.5),
+    'F356W':  (3.05, 4.05),
+    'F360M':  (3.4, 3.8),
+    'F410M':  (3.9, 4.3),
+    'F444W':  (3.8, 5.1),
+    'F480M':  (4.6, 5.0),
+}
+
+# Which tracing table each filter uses. Only F322W2 and F444W have their own.
+DISP_FILTER_FOR = {
+    'F277W': 'F322W2', 'F335M': 'F322W2', 'F322W2': 'F322W2',
+    'F356W': 'F322W2', 'F360M': 'F322W2',
+    'F410M': 'F444W', 'F444W': 'F444W', 'F480M': 'F444W',
+}
+
+
 def load_nircam_wfss_model(pupil, module, filter):
 
     tmp_pupil = pupil
@@ -136,14 +157,32 @@ def load_nircam_wfss_model(pupil, module, filter):
     tmp_filter = filter
 
     ### Interested wavelength Range
-    if tmp_filter == 'F444W': WRANGE = np.array([3.8, 5.1])
-    elif tmp_filter == 'F322W2': WRANGE = np.array([2.4, 4.1])
-    elif tmp_filter == 'F356W':  WRANGE = np.array([3.05, 4.05])
-    # elif tmp_filter == 'F277W':  WRANGE = np.array([2.4, 3.1])
+    # Nominal passband in microns, used only by find_pixel_location() to flag which
+    # wavelengths land on the detector. The kinematics path discards it (see
+    # KinematicsFitter._setup_data, which unpacks `_, sp, dp`), so it does not enter
+    # any fitted number.
+    #
+    # It used to be set for F444W, F322W2 and F356W only, with the F277W branch
+    # commented out, while disp_filter below covers eight filters -- so five of the
+    # filters this function claims to support raised UnboundLocalError at the return
+    # rather than a message naming the problem. That is a live blocker for the
+    # H-alpha sources, which sit in the short-wavelength filters.
+    if tmp_filter not in WRANGE_BY_FILTER:
+        raise NotImplementedError(
+            f'no wavelength range configured for filter {tmp_filter!r}. '
+            f'Supported: {", ".join(sorted(WRANGE_BY_FILTER))}.')
+    WRANGE = np.array(WRANGE_BY_FILTER[tmp_filter])
 
     ### Spectral tracing parameters:
-    if tmp_filter in ['F277W', 'F335M', 'F322W2', 'F356W', 'F360M']: disp_filter = 'F322W2'
-    elif tmp_filter in ['F410M', 'F444W', 'F480M']: disp_filter = 'F444W' 
+    # The tracing tables exist for F322W2 and F444W only; every other WFSS filter
+    # borrows the one covering its wavelengths. The dispersion solution (DISPL_*)
+    # carries no filter in its name and is shared by all of them.
+    if tmp_filter in DISP_FILTER_FOR:
+        disp_filter = DISP_FILTER_FOR[tmp_filter]
+    else:
+        raise NotImplementedError(
+            f'no grism tracing model for filter {tmp_filter!r}. '
+            f'Supported: {", ".join(sorted(DISP_FILTER_FOR))}.')
 
     # dir_wavecal = '/home/u24/fengwusun/Comissioning/FS_grism_config_v3_202406/'
     tb_order23_fit_AR = ascii.read(os.path.join(get_grism_cal_dir(), 'dy_dx_tracing_model/DISP_%s_mod%s_grism%s.dat' % (disp_filter, 'A', 'R')))

@@ -55,3 +55,22 @@ def test_doppler_shift_is_linear_and_signed(models):
     lo, hi = _shift(models['R'], -100.0)[0], _shift(models['R'], +100.0)[0]
     assert lo*hi < 0, 'opposite velocities must shift opposite ways'
     assert abs(lo) == pytest.approx(abs(hi), rel=1e-3)
+
+
+@pytest.mark.parametrize('filt', ['F277W', 'F322W2', 'F335M', 'F356W',
+                                  'F360M', 'F410M', 'F444W', 'F480M'])
+@pytest.mark.parametrize('pupil', ['R', 'C'])
+def test_every_advertised_filter_loads(grism_cal, filt, pupil):
+    '''WRANGE used to be set for three filters while the tracing map covered eight,
+    so five of them raised UnboundLocalError at the return rather than a message.
+    That blocked the H-alpha sources, which sit in the short-wavelength filters.'''
+    from dingo import grism
+    wr, sp, dp = grism.load_nircam_wfss_model(pupil, 'A', filt)
+    assert wr[0] < wr[1]
+    assert len(sp) == 30 and len(dp) == 16
+
+
+def test_unsupported_filter_raises_a_named_error(grism_cal):
+    from dingo import grism
+    with pytest.raises(NotImplementedError, match='F200W'):
+        grism.load_nircam_wfss_model('R', 'A', 'F200W')
