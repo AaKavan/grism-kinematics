@@ -254,7 +254,7 @@ def _extract_tensors(cfgs: Dict[str, FitParamConfig], device: torch.device = 'cp
             continue
         seen.add(id(cfg.tensor))
         tensors.append({'params': [cfg.tensor], 'lr': cfg.lr})
-        clamp_list.append((cfg.tensor, cfg.min, cfg.max))
+        clamp_list.append((cfg.name, cfg.tensor, cfg.min, cfg.max))
     return tensors, clamp_list
 
 def load_fits_data(path_hdu):
@@ -612,6 +612,9 @@ class BaseFitter(ABC):
 
         self.losses = []
         self.lrs    = []
+        self._trace = {n: [] for n, p, _, _ in clamp_list if p.numel() == 1}
+        self._clamp_hits = {n: [] for n in self._trace}
+        self._fit_interrupted = False
 
         try: 
 
@@ -646,14 +649,36 @@ class BaseFitter(ABC):
                     else:
                         self.scheduler.step()
 
-                # Clamp values
-                for p, min, max in self.clamp_list:
-                    p.data.clamp_(min=min, max=max)
+                # Clamp values. Record whether the clamp ACTUALLY FIRED before
+                # applying it: once a parameter is railed it is rewritten to the
+                # bound every step, so its trajectory is a constant and any
+                # "distance from the bound vs recent movement" test is 0/0 exactly
+                # in the case it is meant to detect. Whether the optimiser pushed
+                # outward is the real signal, and it is free here.
+                for name, p, lo, hi in self.clamp_list:
+                    if p.numel() == 1:
+                        v = float(p.data)
+                        if v < float(lo) or v > float(hi):
+                            self._clamp_hits[name].append(i)
+                    p.data.clamp_(min=lo, max=hi)
+
+                # Post-clamp scalar trajectory, for the convergence statistics.
+                for name, p, _, _ in self.clamp_list:
+                    if p.numel() == 1:
+                        self._trace[name].append(float(p.data))
 
                 last_loss = loss
 
-        except KeyboardInterrupt: 
-            LOG.info(f'KeyboadrInterrupt, last step: {i}, last loss: {last_loss}')
+        except KeyboardInterrupt:
+            # `i` and `last_loss` are undefined if the interrupt lands before the
+            # first loop body, which turned a Ctrl-C into a NameError inside the
+            # handler. And a partial fit used to be indistinguishable from a
+            # finished one; fit_report() now says so.
+            self._fit_interrupted = True
+            done = locals().get('i')
+            LOG.warning(
+                f'KeyboardInterrupt at step {done if done is not None else 0} of '
+                f'{self.maxiter}: this fit is INCOMPLETE. fit_report() will flag it.')
 
         # write back final tensor values
         # for cfg in all_cfg.values():
@@ -673,6 +698,7 @@ class BaseFitter(ABC):
         '''
         all_losses = []
         all_lrs    = []
+        self._fit_history = []
 
         nstages = len(self.config['fitting'])
         for idx in range(nstages):
@@ -697,8 +723,171 @@ class BaseFitter(ABC):
             losses, lrs = self.fit_gradient()
             all_losses.append(losses)
             all_lrs.append(lrs)
+            self._fit_history.append({
+                'stage': idx, 'losses': list(losses), 'lrs': list(lrs),
+                'trace': {k: list(v) for k, v in self._trace.items()},
+                'clamp_hits': {k: list(v) for k, v in self._clamp_hits.items()},
+                'bounds': {n: (float(lo), float(hi))
+                           for n, p, lo, hi in self.clamp_list if p.numel() == 1},
+                'interrupted': self._fit_interrupted,
+            })
 
         return all_losses, all_lrs
+
+    # fit diagnostics ---------------------------------------------------------
+
+    _fit_history = ()
+
+    def _fit_report_extra(self, stage_rec):
+        '''Subclass hook: extra checks for one stage. Return a list of problem
+        strings (empty when clean). KinematicsFitter uses it for flux retention.'''
+        return []
+
+    def fit_report(self, strict=False, rail_window=0.1, rail_frac_tol=0.5,
+                   improve_tol=0.01, t_tol=-3.0):
+        '''What the fit actually did, and whether it can be believed.
+
+        fit_gradient runs exactly `maxiter` steps and returns. Nothing checked
+        that the loss had stopped falling, that a parameter had not pinned itself
+        to a bound, or that the loss was even finite -- so a collapsed fit looked
+        exactly like a converged one, and the first sign of trouble was fit_MCMC
+        refusing to initialise walkers with "parameters lie outside the prior
+        support". This is that check, run where the evidence still exists.
+
+        Per stage it reports, and with strict=True raises on:
+
+        railing       the fraction of the final `rail_window` of steps on which the
+                      clamp actually fired for each parameter, plus the step it
+                      first fired. Clamp ACTIVITY, not distance-to-bound: clamping
+                      happens after optimizer.step(), so a railed parameter is
+                      rewritten to the bound every step and its trajectory is a
+                      constant -- distance over recent movement is 0/0 exactly in
+                      the railed case. Activity has no such degeneracy and is
+                      immune to the +-1e10 defaults, which never activate.
+        improvement   (L[n/2] - L[-1]) / (L[0] - L[-1]), the share of this stage's
+                      total gain that arrived in its second half. Above ~1% means
+                      more iterations would still buy something. Dimensionless, so
+                      it does not care about the flux calibration, and unaffected
+                      by the learning-rate schedule.
+        trend         the least-squares slope of the loss over the final window
+                      divided by that slope's standard error. loss() warm-starts
+                      its fixed point from the previous call, so it jitters step to
+                      step; a two-point difference cannot tell drift from jitter
+                      and a t-statistic can. t < -3 means still genuinely falling.
+        lr_ratio      lrs[-1]/lrs[0]. Exactly 1 with ReduceLROnPlateau means the
+                      scheduler never once saw a plateau, which is a sharp
+                      non-convergence signal on its own and costs nothing.
+        finite        any NaN or inf in the loss history. There is no NaN guard in
+                      the gradient path: a NaN loss poisons every parameter through
+                      backward(), ReduceLROnPlateau never registers an improvement
+                      so the rate decays to min_lr, and the fit grinds out every
+                      remaining step producing NaNs that nothing inspects.
+        interrupted   whether Ctrl-C cut this stage short.
+
+        Report-only by default. It deliberately does not stop the fit early --
+        that would change every existing result -- it only tells you what you got.
+        '''
+        if not self._fit_history:
+            raise RuntimeError('fit_report() needs fit_all() to have run first')
+
+        report, problems = [], []
+        for rec in self._fit_history:
+            st = rec['stage'] + 1
+            L = np.asarray(rec['losses'], dtype=float)
+            n = len(L)
+            w = max(2, int(round(rail_window*n)))
+
+            rails = {}
+            for name, hits in rec['clamp_hits'].items():
+                recent = [h for h in hits if h >= n - w]
+                if hits:
+                    rails[name] = {'rail_frac': len(recent)/w, 'first_step': hits[0],
+                                   'bounds': rec['bounds'].get(name),
+                                   'value': rec['trace'][name][-1] if rec['trace'][name] else None}
+
+            finite = bool(np.all(np.isfinite(L))) if n else False
+            if n >= 4:
+                # Total gain this stage achieved. If it is <= 0 the stage ended no
+                # better than it started, and the "share of the gain" question has
+                # no meaning -- that is its own problem, reported below.
+                gain = float(L[0] - L[-1]) if np.isfinite(L[0]) and np.isfinite(L[-1]) else float('nan')
+                improve = (L[n//2] - L[-1])/gain if np.isfinite(gain) and gain > 0 else float('nan')
+                y = L[-w:]
+                x = np.arange(len(y), dtype=float)
+                if np.all(np.isfinite(y)) and len(y) > 2 and np.ptp(y) > 0:
+                    slope, icpt = np.polyfit(x, y, 1)
+                    resid = y - (slope*x + icpt)
+                    se = np.sqrt((resid @ resid)/max(1, len(y) - 2)
+                                 / max(1e-300, ((x - x.mean())**2).sum()))
+                    t = float(slope/se) if se > 0 else 0.0
+                else:
+                    t = 0.0
+            else:
+                improve, t, gain = float('nan'), 0.0, float('nan')
+            # How much the final window itself moved, as a share of the stage's
+            # total gain. A t-statistic says a slope is real; this says whether it
+            # is worth anything. Both have to clear their bar before the loss is
+            # called "still falling", or a perfectly converged stage trips the
+            # alarm on a slope of 1e-9 that happens to have tiny scatter.
+            window_gain = (float(L[-w] - L[-1])/gain
+                           if n >= 4 and np.isfinite(gain) and gain > 0 else float('nan'))
+            lr_ratio = (rec['lrs'][-1]/rec['lrs'][0]) if rec['lrs'] and rec['lrs'][0] else float('nan')
+
+            st_rec = {'stage': st, 'n_steps': n, 'railed': rails, 'finite': finite,
+                      'improvement_second_half': float(improve), 'trend_t': t,
+                      'lr_ratio': float(lr_ratio), 'interrupted': rec['interrupted'],
+                      'stage_gain': gain, 'window_gain_frac': window_gain,
+                      'loss_final': float(L[-1]) if n else float('nan')}
+            report.append(st_rec)
+
+            if not finite:
+                problems.append(f'stage {st}: loss is not finite (NaN/inf in the history)')
+            if rec['interrupted']:
+                problems.append(f'stage {st}: interrupted by Ctrl-C, fit is incomplete')
+            for name, r in rails.items():
+                if r['rail_frac'] >= rail_frac_tol:
+                    problems.append(
+                        f'stage {st}: {name} is railed -- the clamp fired on '
+                        f'{100*r["rail_frac"]:.0f}% of the last {w} steps '
+                        f'(value {r["value"]:.6g}, bounds {r["bounds"]}, first hit at '
+                        f'step {r["first_step"]}). The fit wanted to leave this bound.')
+            if np.isfinite(gain) and gain <= 0 and n >= 4:
+                problems.append(
+                    f'stage {st}: the loss ended no better than it started '
+                    f'({L[0]:.6g} -> {L[-1]:.6g}). This stage bought nothing.')
+            if np.isfinite(improve) and improve > improve_tol:
+                problems.append(
+                    f'stage {st}: {100*improve:.1f}% of the loss improvement arrived in '
+                    f'the second half, so it had not converged; raise maxiter')
+            # Statistical AND practical significance. A converged stage can show a
+            # hugely significant slope that is worth 1e-7 of the total gain.
+            if t < t_tol and np.isfinite(window_gain) and window_gain > 1e-3:
+                problems.append(
+                    f'stage {st}: the loss is still falling over the final {w} steps '
+                    f'(slope t = {t:.1f}, worth {100*window_gain:.2f}% of this stage\'s '
+                    f'total gain); raise maxiter')
+            if t > -t_tol and np.isfinite(window_gain) and window_gain < -1e-3:
+                problems.append(
+                    f'stage {st}: the loss is RISING over the final {w} steps '
+                    f'(slope t = {t:+.1f}, giving back {-100*window_gain:.2f}% of this '
+                    f'stage\'s gain). The learning rate is too high for the polish.')
+            problems.extend(f'stage {st}: {m}' for m in self._fit_report_extra(rec))
+
+        for r in report:
+            rl = ', '.join(f'{k} {100*v["rail_frac"]:.0f}%' for k, v in r['railed'].items()) or 'none'
+            LOG.info(
+                f'[fit] stage {r["stage"]}: loss={r["loss_final"]:.6g} '
+                f'2nd-half improvement={100*r["improvement_second_half"]:.2f}% '
+                f'trend t={r["trend_t"]:+.1f} lr_ratio={r["lr_ratio"]:.3g} '
+                f'railed: {rl}')
+        if problems:
+            msg = 'the fit has problems:\n  ' + '\n  '.join(problems)
+            if strict:
+                raise RuntimeError(msg)
+            LOG.warning('[fit] ' + msg)
+        else:
+            LOG.info('[fit] no railed parameters, loss finite and converged in every stage')
+        return {'stages': report, 'problems': problems, 'ok': not problems}
 
     def get_losses_and_lrs(self):
         return self.losses, self.lrs
@@ -2025,6 +2214,53 @@ class KinematicsFitter(BaseFitter):
                 f'threshold near 1 cuts the stretched galaxy centre rather than the '
                 f'uncovered edges. Lower cov_threshold (0.25 is the default).')
         return self.mcmc_mask
+
+    def _flux_retained(self):
+        '''Fraction of each grism's flux whose rectified position lands on the cutout.
+
+        The objective is sum((image_R - image_C)**2), which says nothing about how
+        much flux either rectification kept -- so it is globally minimised at
+        exactly 0 by any solution that maps BOTH grisms off the cutout: zero equals
+        zero, a perfect score for an empty picture. The interpolator cooperates,
+        zeroing out-of-bounds weights with no accounting (kinematics.py, the
+        `valid` mask), so nothing downstream would reveal it.
+
+        Measured on ID6170, whose config leaves all four offsets free: driving them
+        to 400 px gives loss = 0 against 0.0933 at the fit -- a strictly better
+        minimum that is physically empty. It is unreachable where image.C.dx/dy are
+        frozen (moving R alone makes the loss go UP, since C's flux stays put), the
+        MCMC priors bound the offsets to +-10 px, and no chain on disk went there.
+        A latent trap rather than a live bug, but nothing was watching for it.
+        '''
+        out = {}
+        with torch.no_grad():
+            for g in ('R', 'C'):
+                x, y = getattr(self, f'x_{g}'), getattr(self, f'y_{g}')
+                w = torch.abs(getattr(self, f'true_grism_{g}'))
+                total = float(w.sum())
+                if total <= 0:
+                    out[g] = float('nan'); continue
+                inside = self._cutout_footprint(x, y, getattr(self, f'cutout_{g}'))
+                out[g] = float(w[inside].sum()/total)
+        return out
+
+    def _fit_report_extra(self, stage_rec):
+        problems = []
+        if getattr(self, 'x_R', None) is None:
+            return problems
+        kept = self._flux_retained()
+        LOG.info(f'[fit] flux landing on the cutout: R {100*kept["R"]:.1f}% '
+                 f'C {100*kept["C"]:.1f}%')
+        for g, frac in kept.items():
+            if not np.isfinite(frac):
+                problems.append(f'grism {g} has no flux at all')
+            elif frac < 0.5:
+                problems.append(
+                    f'only {100*frac:.1f}% of grism {g}\'s flux rectifies onto the '
+                    f'cutout. The R-minus-C objective is minimised at 0 by an EMPTY '
+                    f'pair of images, so a low-loss fit here may be the degenerate '
+                    f'solution rather than a good one. Check image.{g}.dx/dy.')
+        return problems
 
     @staticmethod
     def _cutout_footprint(x, y, cutout):
