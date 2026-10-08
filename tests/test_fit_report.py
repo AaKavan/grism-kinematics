@@ -99,3 +99,40 @@ def test_non_finite_loss_is_caught(tmp_path):
     rep = f.fit_report()
     assert rep['stages'][0]['finite'] is False
     assert any('not finite' in p for p in rep['problems'])
+
+
+def test_a_parameter_freed_in_a_later_stage_is_actually_optimised(tmp_path):
+    '''fit_all hands the TENSOR from one stage to the next, which bypasses
+    FitParamConfig.fit's setter -- the thing that keeps tensor.requires_grad in
+    step with cfg.fit. A parameter frozen in stage 1 and free in stage 2 therefore
+    inherited requires_grad=False, was admitted to the optimiser by
+    _extract_tensors (which tests cfg.fit), got p.grad = None, and was silently
+    never optimised.
+    '''
+    cfg = textwrap.dedent('''
+        summary: {name: toy, ra: 0.0, dec: 0.0, z: 1.0, lambda_rest: 1.0,
+                  filter: F444W, mode: kinematics}
+        fitting:
+          - method: Adam
+            maxiter: 50
+            scheduler: StepLR
+            default: {lr: 0.05, min: -1e10, max: 1e10, fit: true}
+            override:
+              toy.p: {fit: false}
+          - method: Adam
+            maxiter: 400
+            scheduler: StepLR
+            default: {lr: 0.05, min: -1e10, max: 1e10, fit: true}
+            override: {}
+    ''')
+    path = tmp_path/'toy2.yaml'
+    path.write_text(cfg)
+    f = _Toy(config_path=str(path), device=torch.device('cpu'))
+    f.target = 3.0
+    f.fit_all()
+
+    stage2 = f.param_config_lists['toy'][1]['toy.p']
+    assert stage2.fit is True
+    assert stage2.tensor.requires_grad is True, 'requires_grad did not follow cfg.fit'
+    assert float(stage2.tensor) == pytest.approx(3.0, abs=0.2), \
+        'the parameter was freed in stage 2 but never moved'

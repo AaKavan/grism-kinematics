@@ -635,6 +635,18 @@ class BaseFitter(ABC):
         for cfg_list in self.param_config_lists.values():
             all_cfg.update(cfg_list[self.current_stage])
         param_groups, clamp_list = _extract_tensors(all_cfg, device=self.device)
+
+        # Initialise the diagnostics BEFORE the early return below, or a stage with
+        # nothing to fit leaves fit_report() with no record of it. That branch only
+        # became reachable once result.emline_model was removed: it was the sole
+        # member of a parameter group present in every stage, so param_groups was
+        # never empty and this guard could never fire.
+        self.losses = []
+        self.lrs    = []
+        self._trace = {n: [] for n, p, _, _ in clamp_list if p.numel() == 1}
+        self._clamp_hits = {n: [] for n in self._trace}
+        self._fit_interrupted = False
+        self.clamp_list = clamp_list
         # if there’s nothing to fit, warn and bail out
 
         if len(param_groups)==0:
@@ -653,7 +665,6 @@ class BaseFitter(ABC):
         else: 
             raise ValueError(f'unknown fitting method: {fs['method']}')
         
-        self.clamp_list = clamp_list
 
         # scheduler setup
         # main scueduler
@@ -682,12 +693,6 @@ class BaseFitter(ABC):
             )
         else: 
             self.scheduler = sched_main
-
-        self.losses = []
-        self.lrs    = []
-        self._trace = {n: [] for n, p, _, _ in clamp_list if p.numel() == 1}
-        self._clamp_hits = {n: [] for n in self._trace}
-        self._fit_interrupted = False
 
         try: 
 
@@ -789,6 +794,18 @@ class BaseFitter(ABC):
                             continue
                         if key in prev_cfg:
                             cfg.tensor = prev_cfg[key].tensor
+                            # Assigning the tensor bypasses FitParamConfig.fit's
+                            # setter, which is what keeps tensor.requires_grad in
+                            # step with cfg.fit. Without this re-assert, a
+                            # parameter frozen in stage i and free in stage i+1
+                            # inherits requires_grad=False, is admitted to the
+                            # optimiser by _extract_tensors (which tests cfg.fit),
+                            # gets p.grad = None, and is silently never optimised.
+                            # The mirror case leaves a frozen parameter with
+                            # requires_grad=True, so it accumulates a gradient that
+                            # optimizer.zero_grad() never clears -- harmless for the
+                            # fit, but garbage to anything reading .grad.
+                            cfg.tensor.requires_grad = cfg.fit
 
             # assign the up-to-date cfgs for this stage
             self._assign_cfgs_for_stage(idx)
