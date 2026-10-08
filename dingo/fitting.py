@@ -117,6 +117,49 @@ class FitParamConfig:
         self._fit = bool(_fit)
         self.tensor.requires_grad = self._fit
     
+# Parameter names each config prefix may define. A key outside its prefix's set is
+# dropped silently when the cfgs are built (that is what makes `velocity.model:
+# arctan` a no-op), so the set is also what an unused-override error quotes back.
+ALLOWED_PARAM_KEYS = {
+    # V_rot and V_sini are alternative parameterisations of the same amplitude:
+    # both are listed, but a given `velocity:` block defines exactly one, which is
+    # why naming the wrong one is the most likely real override typo.
+    'velocity': {'V_rot', 'V_sini', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v'},
+    'image': {'dx', 'dy'},
+    'sersic': {'I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta'},
+    'psf': {'I_psf', 'x_psf', 'y_psf'},
+    'direct': {'dx', 'dy', 'wt', 'zp'},
+    'psfs': {'scale', 'zp'},
+}
+
+
+def check_unused_overrides(overrides, prefixes, what):
+    '''Raise if any `override:` key was never consumed by a parameter.
+
+    `build_param_config_dict_with_alias` pops each key it uses, so whatever is
+    left named nothing. That used to be a LOG.warning, which is invisible in a
+    long run: `velocity.inc` instead of `velocity.inc_v` silently did nothing
+    and the fit went ahead with the parameter unbounded. A config that asks for
+    something the code does not provide is a config that will not do what its
+    author believes, so it fails instead.
+
+    `prefixes` is the set of prefixes this fitter registered, used only to make
+    the message name the keys that WOULD have been valid.
+    '''
+    leftovers = {stage_i: sorted(keys)
+                 for stage_i, keys in enumerate(overrides) if keys}
+    if not leftovers:
+        return
+    valid = sorted({f'{p}.{k}' for p in prefixes
+                    for k in ALLOWED_PARAM_KEYS.get(p.split('.')[0], ())})
+    detail = '; '.join(f'stage {i+1}: {", ".join(ks)}' for i, ks in leftovers.items())
+    raise ValueError(
+        f'{what}: these `override:` keys match no parameter and were ignored -- '
+        f'{detail}. Valid keys for this fit are: {", ".join(valid)}. '
+        f'(A velocity amplitude is either V_rot or V_sini, never both, so '
+        f'overriding the one this config does not define lands here.)')
+
+
 def build_param_config_dict_with_alias(
     raw_dict: Dict[str, Any],
     default_cfgs: Any,
@@ -153,15 +196,7 @@ def build_param_config_dict_with_alias(
         overrides_list[i] = exp  # in-place update!
 
     # --- allowed keys & build configs -----------------------------------------
-    allowed_keys = {
-        'velocity': {'V_rot', 'V_sini', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v'},
-        'image': {'dx', 'dy'},
-        'sersic': {'I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta'}, 
-        'psf': {'I_psf', 'x_psf', 'y_psf'}, 
-        'direct': {'dx', 'dy', 'wt', 'zp'}, # TODO: change image to grism and alas to direct?? TODO: change 'wt' to 'zp'
-        'psfs': {'scale', 'zp'} # TODO: change image to grism and alas to direct??
-        # TODO: move this part out
-    }
+    allowed_keys = dict(ALLOWED_PARAM_KEYS)
     if allowed_keys_extra: 
         allowed_keys.update(allowed_keys_extra)
 
@@ -1576,9 +1611,8 @@ class KinematicsFitter(BaseFitter):
             )
             cfg['image.C.forward_model'].tensor = self.fwd_models['C']
 
-        unused_keys = set([key for stage in overrides for key in stage.keys()])
-        if len(unused_keys)>0:
-            LOG.warning(f'The following override keys are not used: {unused_keys}')
+        check_unused_overrides(overrides, ('velocity', 'image.R', 'image.C'),
+                               f'[{self.__class__.__name__}] {self.config_path}')
 
         # register into the generic param_config_lists
         # NOTE: every group must supply one cfg dict per fitting stage, otherwise
@@ -2566,9 +2600,13 @@ class ImagesFitter(BaseFitter):
                 )
                 self.sersic_cfgs_lists[prefix] = s_cfgs
 
-        if len(overrides)>0: 
-            unused_keys = set([key for stage in overrides for key in stage.keys()])
-            LOG.warning(f'The following override keys are not used: {unused_keys}')
+        # NOTE: this used to guard on `len(overrides) > 0`, which is the number of
+        # fitting STAGES and so is always true -- every ImagesFitter run printed
+        # "override keys are not used: set()". The real test is whether any stage
+        # still holds an unconsumed key.
+        check_unused_overrides(overrides, tuple(self.direct_cfgs_lists) +
+                               tuple(self.psf_cfgs_lists) + tuple(self.sersic_cfgs_lists),
+                               f'[{self.__class__.__name__}] {self.config_path}')
 
         # 5) Register
         self.param_config_lists = (
