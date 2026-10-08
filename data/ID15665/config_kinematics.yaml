@@ -31,16 +31,19 @@ image:
 
 velocity:
   model: arctan
-  # The loss surface is multimodal -- do not "tidy" these. Measured on this source:
-  # the (-300, 2, 1.2) sign-hint start converges to loss()=0.142019, chi2/N~3.0; the
-  # start below reaches loss()=0.133961, chi2/N~2.1. Scored under a single frozen noise
-  # model the second mode is favoured by dlnP ~ +1075, both ways round.
-  V_rot: 500.0
-  R_v: 3
-  x0_v: 40.0
-  y0_v: 40.0
-  theta_v: 0
-  inc_v: 1.0
+  # The loss surface is multimodal -- do not "tidy" these. Under the old V_rot
+  # parameterisation the (-300, 2, 1.2) sign-hint start reached loss()=0.142019 and
+  # the (500, 3, 1.0) start reached 0.133961. Re-running that same start under the
+  # V_sini parameterisation fell into a worse basin (0.4722): the reparameterisation
+  # is exact in the model but it changes Adam's path. These values are the converged
+  # V_rot+inclination-prior solution, carried over so the optimiser begins in the
+  # right basin; V_sini = V_rot*sin(inc_v) = 618.4*sin(0.4563).
+  V_sini: 272.5
+  R_v: 4.6865
+  x0_v: 41.7302
+  y0_v: 41.8428
+  theta_v: 2.3601
+  inc_v: 0.4563
 
 # ----------------------------------------------------------------------------
 # Fitting strategy (also defines the free-parameter set that fit_MCMC samples)
@@ -74,9 +77,16 @@ fitting:
       # MCMC initialisation. The grad student's working batch sets the same bound.
       velocity.R_v:
         min: 0
+      # Under the V_sini parameterisation the amplitude no longer depends on
+      # inclination -- only the weak cos(inc_v) deprojection does -- and Adam does
+      # not see the MCMC priors. Left at [0, 1.57] the optimiser drives inc_v to
+      # exactly 0 (face-on removes the deprojection entirely), which then falls
+      # outside the prior support and no walker can initialise. Hold it within
+      # +-2 sigma of the photometric value during optimisation; the MCMC samples it
+      # under its Gaussian prior, which is what actually constrains it.
       velocity.inc_v:
-        min: 0
-        max: 1.57
+        min: 0.3811
+        max: 0.7291
 
   - method: Adam
     maxiter: 1500
@@ -91,6 +101,12 @@ fitting:
         fit: false
       image.C.dx, image.C.dy:
         fit: false
+      # Stage 2 inherits the [-1e10, 1e10] default unless told otherwise, which
+      # silently undid the stage-1 bound and let inc_v rail to 0.0098 again. The
+      # clamp has to be repeated here.
+      velocity.inc_v:
+        min: 0.3811
+        max: 0.7291
 
 # ----------------------------------------------------------------------------
 # MCMC posterior sampling (read only by fit_MCMC)
@@ -125,7 +141,7 @@ mcmc:
     corr_area: auto
 
   init_scatter:
-    velocity.V_rot:  2.0
+    velocity.V_sini:  2.0
     velocity.R_v:    0.05
     velocity.x0_v:   0.05
     velocity.y0_v:   0.05
@@ -136,8 +152,8 @@ mcmc:
     noise.ln_f:      0.05
 
   priors:
-    # one-signed: (V_rot, theta_v) and (-V_rot, theta_v+pi) give an identical vz field
-    velocity.V_rot:   {type: uniform,     min: 0.0,    max: 2500.0}
+    # one-signed: (V_sini, theta_v) and (-V_sini, theta_v+pi) give an identical vz field
+    velocity.V_sini:   {type: uniform,     min: 0.0,    max: 1500.0}   # projected amplitude; V_rot = V_sini/sin(inc_v) is derived
     # lower bound keeps the damped fixed-point iteration contracting; the upper
     # bound is the cutout radius: beyond it the arctangent is a solid-body field
     # of vanishing amplitude, i.e. a no-rotation model that the sampler can hide
@@ -149,11 +165,12 @@ mcmc:
     velocity.x0_v:    {type: uniform,     min: 10.0, max: 70.0}
     velocity.y0_v:    {type: uniform,     min: 10.0, max: 70.0}
     velocity.theta_v: {type: uniform,     min: 0.0,    max: 6.283185}
-    # No photometric measurement supplied. sin_i is the isotropic-orientation
-    # prior; it does NOT break the V_rot--inc_v degeneracy (corr ~ -0.99), so
-    # V_rot alone will be poorly constrained. Pass inc_mu/inc_sigma, or let the
-    # notebook overwrite this from its pysersic fit.
-    velocity.inc_v:   {type: sin_i,   min: 0.0873, max: 1.4835}
+    # Photometric inclination, written by geko_dingo_compare.set_inclination_prior()
+    # from this source's own pysersic fit. This is the ONE informative prior DINGO
+    # takes. It does not break the V--inc degeneracy (nothing in the data does);
+    # sampling V_sini above is what removes that direction. Its width sets how well
+    # the derived V_rot = V_sini/sin(inc_v) is known.
+    velocity.inc_v:   {type: gaussian, mu: 0.5551, sigma: 0.0870, min: 0.0873, max: 1.4835}   # from ID15665_sersic_F444W_pysersic_fixedinc.npz
     image.R.dx:       {type: uniform,     min: -10.0,  max: 10.0}
     image.R.dy:       {type: uniform,     min: -10.0,  max: 10.0}
     noise.ln_f:       {type: uniform,     min: -1.5,   max: 1.5}

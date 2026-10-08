@@ -9,7 +9,8 @@ LOG.addHandler(logging.NullHandler())  # Prevents "No handler found" warning if 
 
 
 #%% kinematics models in torch
-def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., theta_v=0., inc_v=0., **kwargs):
+def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., theta_v=0.,
+                                   inc_v=0., V_sini=None, **kwargs):
     """
     TODO: change the name to torch
     Compute vx, vy, vz on the sky for a rotating disk using arctangent rotation curve.
@@ -19,7 +20,11 @@ def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., t
     x, y : torch.Tensor
         Coordinates (float32) of shape (H, W) or (N,) in arcsec or pixels.
     V_rot : float or torch.Tensor
-        Maximum rotational velocity.
+        Maximum (deprojected) rotational velocity. Ignored when V_sini is given.
+    V_sini : float or torch.Tensor, optional
+        The projected amplitude V_rot*sin(inc_v). Supplying this instead of V_rot
+        reparameterises the model onto the quantity the data actually constrain --
+        see the note at the amplitude below.
     R_v : float or torch.Tensor
         Turnover radius (scale radius).
     x0_v, y0_v : float or torch.Tensor
@@ -46,12 +51,21 @@ def arctangent_disk_velocity_model(x, y, V_rot=200., R_v=2., x0_v=0., y0_v=0., t
     # Deproject radius (inclination)
     r = torch.sqrt(x_p**2 + (y_p / torch.cos(inc_v))**2 + 1e-8)
 
-    # Rotation curve
-    V_circ = (2 / torch.pi) * V_rot * torch.atan(r / R_v)
+    # Amplitude. V_rot and inc_v enter the line-of-sight field only through the
+    # product V_rot*sin(inc_v); inclination survives on its own ONLY through the
+    # cos(inc_v) deprojection in r above. That handle is strong for an edge-on disk
+    # and almost absent for a face-on one, so for a round galaxy the two parameters
+    # are nearly perfectly degenerate: on ID15665 (inc ~ 26 deg) the chain reached
+    # corr(V_rot, inc_v) = -0.97 with tau ~ 800, against corr = -0.15 for ID21636
+    # (inc ~ 62 deg). Sampling V_sini instead of V_rot removes that direction from
+    # the chain: the likelihood then depends on V_sini alone, and inc_v is set by
+    # its prior plus the weak geometry. V_rot = V_sini/sin(inc_v) is recovered after
+    # sampling, and inherits the inclination prior's width honestly.
+    amp = V_rot * torch.sin(inc_v) if V_sini is None else V_sini
+    V_circ = (2 / torch.pi) * amp * torch.atan(r / R_v)
 
-    # Tangential velocity projected along line-of-sight
     # Only vz (los velocity) is non-zero, vx = vy = 0
-    vz = V_circ * torch.sin(inc_v) * (x_p / (r + 1e-8))
+    vz = V_circ * (x_p / (r + 1e-8))
 
     # # Optionally return full velocity field (vx, vy = 0 for circular disk)
     # vx = torch.zeros_like(vz)

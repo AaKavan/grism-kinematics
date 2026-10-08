@@ -69,3 +69,25 @@ if __name__ == '__main__':
     results = [check(s) for s in SOURCES]
     print('\nALL PASS' if all(results) else '\nFAILED')
     sys.exit(0 if all(results) else 1)
+
+
+def test_vsini_reparameterisation_is_exact():
+    """Sampling V_sini must give a bit-identical velocity field to V_rot*sin(inc).
+
+    The whole point of the reparameterisation is that it changes only which
+    coordinate the sampler walks in, never the model. If this drifts, every chain
+    fitted in one parameterisation stops being comparable with the other.
+    """
+    import numpy as np
+    import torch
+    from dingo import kinematics as K
+
+    T = torch.tensor
+    y, x = torch.meshgrid(torch.arange(81.), torch.arange(81.), indexing='ij')
+    for V, inc in ((618.4, 0.456), (223.3, 1.0906), (1000.0, 0.12), (300.0, 1.4)):
+        kw = dict(R_v=T(4.686), x0_v=T(42.3), y0_v=T(40.0),
+                  theta_v=T(2.36), inc_v=T(inc))
+        a = K.arctangent_disk_velocity_model(x, y, V_rot=T(V), **kw)
+        b = K.arctangent_disk_velocity_model(x, y, V_sini=T(V * np.sin(inc)), **kw)
+        # float32: 1e-7 relative on a ~300 km/s field
+        assert torch.allclose(a, b, atol=1e-4), (V, inc, (a - b).abs().max().item())

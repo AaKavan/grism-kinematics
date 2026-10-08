@@ -154,7 +154,7 @@ def build_param_config_dict_with_alias(
 
     # --- allowed keys & build configs -----------------------------------------
     allowed_keys = {
-        'velocity': {'V_rot', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v'},
+        'velocity': {'V_rot', 'V_sini', 'R_v', 'x0_v', 'y0_v', 'theta_v', 'inc_v'},
         'image': {'dx', 'dy'},
         'sersic': {'I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta'}, 
         'psf': {'I_psf', 'x_psf', 'y_psf'}, 
@@ -954,13 +954,15 @@ class BaseFitter(ABC):
         # config may start V_rot negative on purpose (the sample's rotation sense
         # varies), while the prior is one-signed to kill that exact mirror mode.
         # Map onto the positive branch rather than refusing to sample.
+        _amp = next((n for n in ('velocity.V_rot', 'velocity.V_sini')
+                     if n in self.mcmc_param_names), None)
         try:
-            iv = self.mcmc_param_names.index('velocity.V_rot')
+            iv = self.mcmc_param_names.index(_amp) if _amp else None
             it = self.mcmc_param_names.index('velocity.theta_v')
         except ValueError:
             iv = it = None
         if iv is not None and it is not None and theta0[iv] < 0:
-            LOG.info(f'[MCMC] V_rot is negative ({theta0[iv]:.2f}); reflecting onto '
+            LOG.info(f'[MCMC] {_amp} is negative ({theta0[iv]:.2f}); reflecting onto '
                      f'the positive branch with theta_v -> theta_v + pi '
                      f'(identical velocity field)')
             theta0[iv] = -theta0[iv]
@@ -1392,6 +1394,13 @@ class BaseFitter(ABC):
             vsini = chain[:, names.index('velocity.V_rot')]*np.sin(chain[:, names.index('velocity.inc_v')])
             lo, med, hi = np.percentile(vsini, percentiles)
             out['velocity.Vsini'] = (float(lo), float(med), float(hi))
+        elif 'velocity.V_sini' in names and 'velocity.inc_v' in names:
+            # sampled the projected amplitude: the deprojected V_rot is the derived
+            # one, and its width is inherited from the inclination prior.
+            vrot = chain[:, names.index('velocity.V_sini')] / np.sin(
+                np.clip(chain[:, names.index('velocity.inc_v')], 1e-6, None))
+            lo, med, hi = np.percentile(vrot, percentiles)
+            out['velocity.V_rot_derived'] = (float(lo), float(med), float(hi))
         return out
 
     def get_mcmc_diagnostics(self):
@@ -2191,9 +2200,9 @@ class KinematicsFitter(BaseFitter):
             return self._profiled_lnL(chi2) if profile else self._chi2_to_lnL(chi2, ln_f_fixed)
 
         saved = {n: float(all_cfg[n].tensor.detach().cpu()) for n in names}
-        v_key = 'velocity.V_rot'
-        if v_key not in all_cfg:
-            raise KeyError('no velocity.V_rot parameter in this stage')
+        v_key = next((k for k in ('velocity.V_rot', 'velocity.V_sini') if k in all_cfg), None)
+        if v_key is None:
+            raise KeyError('no velocity.V_rot or velocity.V_sini parameter in this stage')
 
         # rotating model at the current parameters
         ll = self.log_likelihood(**{'noise.ln_f': ln_f_fixed})

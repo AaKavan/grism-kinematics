@@ -103,14 +103,19 @@ mcmc:
   # mean sum of squared bilinear weights (~0.44), and is kept only for comparison.
   likelihood: gaussian
   init: adam
-  nwalkers: 32
-  nsteps: 8000
-  nburn: 2000
+  # Showcase run for the proposal figure. The earlier 24-walker chain reached
+  # only n/tau = 11.8 (tau ~ 600), too short to quote. 256 walkers exercise the
+  # batched log-probability path (valid since cdab142 fixed the zero-variance
+  # NaN that returned -inf for every ID21636 walker), and 30000 steps is the
+  # first setting that clears n/tau > 50 at that tau.
+  nwalkers: 256
+  nsteps: 30000
+  nburn: 5000
   xy_iters: 40
   xy_tol: 5e-3
   log_cadence: 200
   seed: 42
-  checkpoint: ../results/ID21636/ID21636_chain_checkpoint.npz
+  checkpoint: ../results/ID21636/ID21636_chain_showcase_checkpoint.npz
   resume: true
   checkpoint_every: 500
 
@@ -143,11 +148,20 @@ mcmc:
     velocity.x0_v:    {type: uniform,     min: 10.0, max: 70.0}
     velocity.y0_v:    {type: uniform,     min: 10.0, max: 70.0}
     velocity.theta_v: {type: uniform,     min: 0.0,    max: 6.283185}
-    # No photometric measurement supplied. sin_i is the isotropic-orientation
-    # prior; it does NOT break the V_rot--inc_v degeneracy (corr ~ -0.99), so
-    # V_rot alone will be poorly constrained. Pass inc_mu/inc_sigma, or let the
-    # notebook overwrite this from its pysersic fit.
-    velocity.inc_v:   {type: sin_i,   min: 0.0873, max: 1.4835}
+    # The ONLY informative prior in this fit, and deliberately so: inclination
+    # enters as V_rot*sin(i), a degeneracy (corr ~ -0.99) that no amount of R+C
+    # data breaks, so sin_i alone leaves V_rot essentially unconstrained. mu/sigma
+    # are DINGO's OWN pysersic F444W posterior for this source (inc median
+    # 1.15360 rad = 66.10 deg, std 0.0307; sigma widened to the pipeline's stated
+    # inc_err = 0.0436 rad = 2.50 deg, from ID21636_headline.npz). Taking it from
+    # our own fit rather than copying geko's 1.1629 keeps the two pipelines
+    # independent, so the |V sin i| agreement between them means something.
+    #
+    # Nothing else here is informative -- theta_v stays uniform on the full
+    # circle, R_v log-uniform, the centroid uniform. That is the point of the
+    # comparison: no light-profile prior, so every other number DINGO reports is
+    # a measurement rather than a restatement of its prior.
+    velocity.inc_v:   {type: gaussian, mu: 1.1536, sigma: 0.0436, min: 0.0873, max: 1.4835}
     image.R.dx:       {type: uniform,     min: -10.0,  max: 10.0}
     image.R.dy:       {type: uniform,     min: -10.0,  max: 10.0}
     noise.ln_f:       {type: uniform,     min: -1.5,   max: 1.5}
