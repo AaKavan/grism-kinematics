@@ -136,3 +136,57 @@ def test_v_sys_is_registered_but_frozen_in_every_shipped_config(cfg_path):
         assert 'velocity.v_sys' in st, f'stage {i+1} has no v_sys'
         assert st['velocity.v_sys'].fit is False, f'stage {i+1} has v_sys FREE'
         assert float(st['velocity.v_sys'].tensor) == 0.0
+
+
+def test_bounds_are_inherited_by_later_stages():
+    '''A bound set in stage 1 must still hold in stage 2.
+
+    This is the bug that let inc_v rail to 0 and then 0.0098: stage 2 rebuilt
+    every parameter from its own override plus the stage default, so a bound set
+    only in stage 1 reverted to [-1e10, 1e10] -- and stage 2 runs last, so those
+    are the values MCMC initialises from.
+    '''
+    cfgs = _build([
+        {'default': dict(DEFAULT), 'override': {'velocity.inc_v': {'min': 0.0, 'max': 1.57}}},
+        {'default': dict(DEFAULT)},
+    ])
+    for st in (0, 1):
+        assert float(cfgs[st]['velocity.inc_v'].min) == pytest.approx(0.0), f'stage {st+1}'
+        assert float(cfgs[st]['velocity.inc_v'].max) == pytest.approx(1.57), f'stage {st+1}'
+
+
+def test_a_later_stage_can_still_widen_a_bound():
+    '''Inheritance must not make a deliberately temporary bound inexpressible.'''
+    cfgs = _build([
+        {'default': dict(DEFAULT), 'override': {'velocity.R_v': {'min': 1.0}}},
+        {'default': dict(DEFAULT), 'override': {'velocity.R_v': {'min': -5.0}}},
+    ])
+    assert float(cfgs[0]['velocity.R_v'].min) == pytest.approx(1.0)
+    assert float(cfgs[1]['velocity.R_v'].min) == pytest.approx(-5.0)
+
+
+def test_lr_and_fit_are_NOT_inherited():
+    '''Varying these per stage is what staging is for: image.R.dx takes lr 0.5 in
+    the search and the stage default in the polish, and theta_v is frozen for the
+    polish. Inheriting either would break every shipped config.'''
+    stages = [
+        {'default': dict(DEFAULT), 'override': {'velocity.theta_v': {'fit': False, 'lr': 0.5}}},
+        {'default': dict(DEFAULT, lr=0.003)},
+    ]
+    cfgs = _build(stages, raw={'V_rot': 300.0, 'theta_v': 0.0})
+    assert cfgs[0]['velocity.theta_v'].fit is False
+    assert cfgs[1]['velocity.theta_v'].fit is True
+    assert cfgs[0]['velocity.theta_v'].lr == pytest.approx(0.5)
+    assert cfgs[1]['velocity.theta_v'].lr == pytest.approx(0.003)
+
+
+def test_inherited_bounds_survive_yaml_string_scientific_notation():
+    '''PyYAML hands back '-1e10' as a str, so the inheritance must carry the raw
+    value and let ensure_float_like convert it, not float() it on the way past.'''
+    cfgs = _build([
+        {'default': {'lr': 0.05, 'min': '-1e10', 'max': '1e10', 'fit': True},
+         'override': {'velocity.R_v': {'min': '1e-3'}}},
+        {'default': {'lr': 0.05, 'min': '-1e10', 'max': '1e10', 'fit': True}},
+    ])
+    assert float(cfgs[1]['velocity.R_v'].min) == pytest.approx(1e-3)
+    assert float(cfgs[1]['velocity.R_v'].max) == pytest.approx(1e10)

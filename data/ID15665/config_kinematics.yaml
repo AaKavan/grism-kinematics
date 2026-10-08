@@ -101,12 +101,11 @@ fitting:
         fit: false
       image.C.dx, image.C.dy:
         fit: false
-      # Stage 2 inherits the [-1e10, 1e10] default unless told otherwise, which
-      # silently undid the stage-1 bound and let inc_v rail to 0.0098 again. The
-      # clamp has to be repeated here.
-      velocity.inc_v:
-        min: 0.3811
-        max: 0.7291
+      # NOTE: velocity.inc_v's [0.3811, 0.7291] clamp from stage 1 is INHERITED
+      # here and no longer has to be repeated. It used to: stage 2 fell back to
+      # the [-1e10, 1e10] default, which silently undid the stage-1 bound and let
+      # inc_v rail to 0.0098. Bounds now carry forward; lr and fit stay per-stage.
+      # A later stage can still widen a bound by naming it explicitly.
 
 # ----------------------------------------------------------------------------
 # MCMC posterior sampling (read only by fit_MCMC)

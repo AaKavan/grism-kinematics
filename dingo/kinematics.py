@@ -1,3 +1,23 @@
+"""The physics: velocity field, Doppler mapping, and rectification.
+
+arctangent_disk_velocity_model is the model. Note what it does and does not
+constrain: V_rot and inc_v enter the line-of-sight field almost entirely through
+the product V_rot*sin(inc_v), with inclination surviving on its own only through
+the cos(inc_v) deprojection in the radius -- a strong handle for an edge-on disk
+and almost none for a face-on one. Sampling V_sini instead of V_rot removes that
+degenerate direction from the chain.
+
+iteratively_find_xy is the forward model actually used by the fitter: a damped
+fixed point that solves for where each grism pixel came from, given that the
+wavelength it was dispersed by depends on the velocity at the position being
+solved for. fit_MCMC runs it with tol=0 and a fixed iteration count so the
+likelihood is a deterministic function of theta -- an early exit at a
+theta-dependent step makes ln L discontinuous, which emcee cannot sample.
+
+"dispersion" throughout this module means GRISM dispersion, never velocity
+dispersion. The model has no line-width term.
+"""
+
 import torch
 from . import galaxy, utils
 

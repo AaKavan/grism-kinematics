@@ -262,6 +262,22 @@ def build_param_config_dict_with_alias(
         allowed_keys.update(allowed_keys_extra)
 
     cfgs_list = []
+    # Bounds resolved by the previous stage, keyed by full parameter name. A bound
+    # is a property of the PARAMETER (R_v is a radius, inc_v is an angle in
+    # [0, pi/2]), so it carries forward; lr and fit are properties of the STRATEGY
+    # and stay per-stage, because varying them is the entire point of staging.
+    #
+    # Without this, a `min`/`max` set in stage 1 silently reverted to the stage
+    # default -- usually [-1e10, 1e10] -- in stage 2, which runs LAST and so sets
+    # the values MCMC initialises from. Eight of the nine shipped configs lost
+    # velocity.R_v.min=0 and velocity.inc_v in [0, 1.57] this way; only ID15665
+    # repeated the clamp by hand, with a comment saying it had to.
+    #
+    # The raw value is carried, never a float(): PyYAML 1.1 does not resolve an
+    # unquoted -1e10 as a number, so these are often strings, and ensure_float_like
+    # inside FitParamConfig is what converts them. A later stage can still widen a
+    # bound by naming it explicitly, including back to +-1e10.
+    inherited = {}
     # process each batch of fitting
     for i, (default_cfg, all_cfg) in enumerate(zip(default_cfgs, all_cfgs)):
         overrides = overrides_list[i]  # still references the outer list element
@@ -276,12 +292,16 @@ def build_param_config_dict_with_alias(
                 alias_map[full_key] = val
             else:
                 oc = overrides.pop(full_key, {})  # now catches any split keys; mutate overrides to make a overrides counter
+                prev = inherited.get(full_key, {})
+                lo = oc['min'] if 'min' in oc else prev.get('min', default_cfg['min'])
+                hi = oc['max'] if 'max' in oc else prev.get('max', default_cfg['max'])
+                inherited[full_key] = {'min': lo, 'max': hi}
                 cfgs[full_key] = FitParamConfig(
                     name=full_key,
                     value=val,
                     lr=oc.get('lr', default_cfg['lr']),
-                    min=oc.get('min', default_cfg['min']),
-                    max=oc.get('max', default_cfg['max']),
+                    min=lo,
+                    max=hi,
                     fit=oc.get('fit', default_cfg['fit']),
                     device=device
                 )
