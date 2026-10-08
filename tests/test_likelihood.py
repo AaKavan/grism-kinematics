@@ -204,3 +204,47 @@ def test_fingerprint_tracks_the_input_data(prepared):
     finally:
         f.true_grism_R = orig
     assert f.mcmc_fingerprint()['data_sha256'] == base
+
+
+@pytest.mark.data
+@pytest.mark.parametrize('prepared', SOURCES, indirect=True)
+def test_load_chain_enables_the_chain_consumers(prepared):
+    '''load_mcmc() is a staticmethod returning a dict, so everything that scores a
+    saved chain had to assemble the fitter's attributes by hand -- four scripts
+    did. load_chain() is the missing half of save_mcmc.'''
+    import os
+    sid, f, setup, theta = prepared
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(repo, 'results', f'{sid}_chain.npz')
+    if not os.path.exists(path):
+        pytest.skip(f'no saved chain at {path}')
+
+    f.load_chain(path, prepare=False)
+    res = f.get_mcmc_results()
+    assert set(res) >= set(setup['param_names'])
+    for lo, med, hi in res.values():
+        assert lo <= med <= hi
+
+    # diagnostics must work with no live sampler -- that is the whole point
+    assert not hasattr(f, 'mcmc_sampler')
+    diag = f.get_mcmc_diagnostics()
+    assert diag['n_steps'] > 0
+    assert np.isfinite(diag['acceptance_fraction'][0])
+
+    # and the MAP must round-trip back into the model
+    t = f.set_params_to_mcmc('map')
+    assert np.isfinite(f.log_probability(t))
+
+
+@pytest.mark.data
+@pytest.mark.parametrize('prepared', SOURCES, indirect=True)
+def test_load_chain_rejects_a_mismatched_parameter_order(prepared, tmp_path):
+    '''save_mcmc round-trips param_names precisely so a reordering cannot mis-map
+    columns; load_chain has to actually check it.'''
+    sid, f, setup, theta = prepared
+    bad = tmp_path/'bad.npz'
+    n = len(setup['param_names'])
+    np.savez(bad, chain=np.zeros((4, 3, n)), log_prob=np.zeros((4, 3)),
+             param_names=np.array(setup['param_names'][::-1], dtype=object), nburn=0)
+    with pytest.raises(RuntimeError, match='do not match'):
+        f.load_chain(str(bad), prepare=False)

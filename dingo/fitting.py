@@ -1017,7 +1017,23 @@ class BaseFitter(ABC):
                 s['period'] = period
             priors.append((name, s))
         for name in self.mcmc_extra_param_names:
-            priors.append((name, dict(spec.get(name, {'type': 'uniform', 'min': -3.0, 'max': 3.0}))))
+            # These used to skip the setdefault() applied above, so a config writing
+            # `noise.ln_f: {min: -1, max: 1}` with no `type` produced a raw
+            # KeyError('type') at the first walker rather than a defaulted uniform.
+            nspec = dict(spec.get(name) or {})
+            nspec.setdefault('type', 'uniform')
+            nspec.setdefault('min', -3.0)
+            nspec.setdefault('max', 3.0)
+            priors.append((name, nspec))
+        known = {'uniform', 'log_uniform', 'gaussian', 'sin_i'}
+        bad = [(n, sp.get('type')) for n, sp in priors if sp.get('type') not in known]
+        if bad:
+            # log_prior raises on an unknown type, but only when the first walker is
+            # evaluated -- deep inside fit_MCMC, long after the config was read.
+            raise ValueError(
+                'unknown prior type(s) in mcmc.priors: '
+                + ', '.join(f'{n}: {t!r}' for n, t in bad)
+                + f'. Known types: {", ".join(sorted(known))}.')
         self._check_mcmc_priors(priors)
         return priors
 
@@ -1811,13 +1827,22 @@ class BaseFitter(ABC):
     def get_mcmc_diagnostics(self):
         '''Convergence diagnostics for the last fit_MCMC run.'''
         emcee = _import_emcee()
-        sampler = self.mcmc_sampler
+        # Works on a chain LOADED from disk as well as on one just sampled: the
+        # point of load_chain() is that the diagnostics are what you want when
+        # revisiting a saved run, and those are exactly the moments there is no
+        # live sampler.
+        sampler = getattr(self, 'mcmc_sampler', None)
         chain = getattr(self, '_mcmc_raw_chain', None)
         if chain is None:
+            if sampler is None:
+                raise RuntimeError(
+                    'no chain available: run fit_MCMC() or load_chain(path) first')
             chain = sampler.get_chain()
         chain = chain[self.mcmc_nburn:]                           # (nsteps, nwalkers, ndim)
         nsteps = chain.shape[0]
-        acc = sampler.acceptance_fraction
+        acc = getattr(self, '_mcmc_acceptance', None)
+        if acc is None:
+            acc = sampler.acceptance_fraction if sampler is not None else np.array([np.nan])
         try:
             tau = emcee.autocorr.integrated_time(chain, quiet=True)
         except Exception as exc:
@@ -1826,6 +1851,7 @@ class BaseFitter(ABC):
         raw_log_prob = getattr(self, '_mcmc_raw_log_prob', None)
         if raw_log_prob is None:
             raw_log_prob = sampler.get_log_prob()
+        acc = np.asarray(acc, dtype=float)
         # NOTE: no R-hat here. emcee is an ENSEMBLE sampler -- walkers propose
         # from one another, so they are not independent chains and Gelman-Rubin
         # comes out optimistic by construction. tau and n_steps/tau below are the
@@ -1835,7 +1861,9 @@ class BaseFitter(ABC):
         return {
             'n_steps': int(nsteps),
             'n_burn': int(self.mcmc_nburn),
-            'acceptance_fraction': (float(np.mean(acc)), float(np.min(acc)), float(np.max(acc))),
+            'acceptance_fraction': (float(np.nanmean(acc)), float(np.nanmin(acc)),
+                                    float(np.nanmax(acc))) if np.any(np.isfinite(acc))
+                                   else (float('nan'),)*3,
             'tau': {n: float(t) for n, t in zip(self.mcmc_param_names, tau)},
             'n_steps_over_tau': {n: float(nsteps/t) for n, t in zip(self.mcmc_param_names, tau)},
             'n_eff': {n: float(chain[:, :, j].size/t)
@@ -1862,7 +1890,18 @@ class BaseFitter(ABC):
         if mode == 'map':
             theta = self.mcmc_chain[int(np.argmax(self.mcmc_log_prob))]
         elif mode == 'median':
+            # theta_v is an ANGLE with a 2*pi-periodic likelihood, so a plain median
+            # of a posterior straddling the branch cut lands between the two lobes,
+            # i.e. nowhere the chain ever was. get_mcmc_results already handles this
+            # with _circular_percentile; this did not.
+            circ = {n: sp for n, sp in getattr(self, '_mcmc_priors', []) if sp.get('circular')}
             theta = np.median(self.mcmc_chain, axis=0)
+            for j, name in enumerate(self.mcmc_param_names):
+                if name in circ:
+                    _, med, _ = _circular_percentile(
+                        self.mcmc_chain[:, j], circ[name]['period'], circ[name]['min'],
+                        (16, 50, 84))
+                    theta[j] = med
         else:
             raise ValueError(f'unknown mode: {mode}')
         extras = self._mcmc_set_theta(theta)
@@ -1907,6 +1946,46 @@ class BaseFitter(ABC):
         np.savez_compressed(path, **data)
         LOG.info(f'[MCMC] chain saved to {path}')
         return path
+
+    def load_chain(self, path, prepare=True):
+        '''Load a saved chain into THIS fitter, so the chain-consuming methods work.
+
+        load_mcmc() is a staticmethod returning a dict, so everything that wanted
+        to score a saved chain -- get_mcmc_results, set_params_to_mcmc,
+        compare_null_model, get_mcmc_diagnostics -- had to have its attributes
+        assembled by hand, and four scripts did exactly that. This is the missing
+        half of save_mcmc.
+
+        With prepare=True (the default) it calls prepare_mcmc() first, so the noise
+        model is frozen and the priors exist; pass False if the caller has already
+        done that. The saved parameter order is checked against the rebuilt one,
+        because save_mcmc round-trips param_names precisely so a reordering cannot
+        mis-map columns.
+        '''
+        d = self.load_mcmc(path)
+        if prepare and getattr(self, '_mcmc_priors', None) is None:
+            self.prepare_mcmc()
+        elif prepare and not hasattr(self, '_mcmc_names'):
+            self.prepare_mcmc()
+        names = [str(n) for n in d['param_names']]
+        if hasattr(self, 'mcmc_param_names') and names != list(self.mcmc_param_names):
+            raise RuntimeError(
+                f'the saved chain\'s parameters do not match this config:\n'
+                f'  saved:   {names}\n  rebuilt: {list(self.mcmc_param_names)}')
+        self.mcmc_param_names = names
+        chain = np.asarray(d['chain'])
+        log_prob = np.asarray(d['log_prob'])
+        nburn = int(d['nburn']) if 'nburn' in d else 0
+        self._mcmc_raw_chain, self._mcmc_raw_log_prob = chain, log_prob
+        if 'acceptance_fraction' in d:
+            self._mcmc_acceptance = np.asarray(d['acceptance_fraction'], dtype=float)
+        self.mcmc_nburn = nburn
+        self.mcmc_chain = chain[nburn:].reshape(-1, chain.shape[-1])
+        self.mcmc_log_prob = log_prob[nburn:].reshape(-1)
+        LOG.info(f'[MCMC] loaded {self.mcmc_chain.shape[0]} post-burn-in samples '
+                 f'({chain.shape[0]} steps x {chain.shape[1]} walkers, nburn={nburn}) '
+                 f'from {path}')
+        return d
 
     @staticmethod
     def load_mcmc(path):
