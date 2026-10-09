@@ -149,6 +149,24 @@ def cmd_floor(args):
 
 # ── test 2: single-mock recovery ───────────────────────────────────────────────
 
+def isolate_from_production(f):
+    """Detach this fitter's MCMC from the config's checkpoint.
+
+    Every mock here re-fits with a short chain (nburn 400 rather than the
+    production 2000), while the configs carry `resume: true` and a checkpoint
+    path. So each mock tried to RESUME THE PRODUCTION CHAIN and died on
+    "existing checkpoint has a different nburn" -- all 20 of 20, every time, so
+    the ensemble test has never produced a number. Had the burn-in happened to
+    match, it would have been worse: the mocks would have written their results
+    into the real chain file.
+    """
+    mc = f.config.setdefault('mcmc', {})
+    mc['checkpoint'] = None
+    mc['backend'] = None
+    mc['resume'] = False
+    return f
+
+
 def cmd_single(args):
     f, names = build_fitter(args.config)
     theta_map = current_theta(f, names)
@@ -182,6 +200,7 @@ def cmd_single(args):
     f.current_stage = 0
     f._assign_cfgs_for_stage(0)
     f.setup_noise_model()            # refreeze mask/footprint on the mock
+    isolate_from_production(f)
     chain, _ = f.fit_MCMC(nwalkers=args.nwalkers, nsteps=args.nsteps, nburn=args.nburn)
 
     LOG.info('--- single-mock recovery ---')
@@ -236,6 +255,7 @@ def _ensemble_worker(job):
         f.current_stage = 0
         f._assign_cfgs_for_stage(0)
         f.setup_noise_model()
+        isolate_from_production(f)
         chain, _ = f.fit_MCMC(nwalkers=nwalkers, nsteps=nsteps, nburn=nburn, seed=seed)
         lo, med, hi = np.percentile(chain, [16, 50, 84], axis=0)
         return idx, med, 0.5*(hi - lo), lo, hi, list(f.mcmc_param_names)
