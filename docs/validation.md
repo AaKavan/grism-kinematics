@@ -81,6 +81,36 @@ of systemic velocity with nowhere to go — `velocity.v_sys` is frozen in every
 shipped config. That is an argument for switching it on for this source and
 seeing whether it absorbs the bias.
 
+## Does freeing v_sys absorb the registration bias?
+
+Tested directly, because the shrinkage above predicted it should: 0.25 px at
+71.5 km/s per pixel is ~18 km/s with nowhere to go while `velocity.v_sys` is
+frozen. `data/ID15665/config_kinematics_vsys.yaml` is the production config with
+that one parameter freed; the floor test gives a known truth to measure against.
+
+| quantity (floor test, at MAP) | v_sys frozen | v_sys free | |
+|---|---|---|---|
+| V_sini bias (km/s) | 6.88 | **4.10** | −40% |
+| SSE_floor / (N·var_base) | 0.191 | **0.119** | −38% |
+| y0_v bias (px) | 1.20 | 0.84 | −30% |
+| image.R.dx bias (px) | −0.327 | −0.256 | −22% |
+
+**The prediction held in sign and magnitude.** Fitted on the real data,
+`v_sys = -23.4 km/s` against ~18 predicted. Taken at face value that says
+`summary.z` is high by 1.7e-4, i.e. 1.16130 would become 1.16113.
+
+**It does not absorb the shrinkage.** `image.R.dx` is still biased −0.26 px.
+What moved is the offset itself: ~0.27 px of it migrated into `v_sys` (≈19 km/s,
+consistent with the fitted value), while the smoothing-induced shrinkage simply
+follows whichever parameter now carries the offset. That is what the 45° angle
+in `vsys_separability.py` implies — the two share the direction rather than
+separating it.
+
+**And v_sys is poorly recovered in its own right:** true −23.44, fitted −35.02,
+a −49% bias. So freeing it buys a 40% reduction in the headline parameter's bias
+at the price of a new parameter that cannot be quoted. Promising, not settled,
+which is why it lives in a variant config rather than the production one.
+
 ## The caveat on the inflation factor
 
 The ensemble mocks run **32 walkers × 1200 steps after 400 burn**, against a
@@ -109,3 +139,17 @@ alone goes 38 s → 104 s under load. Workers pin torch to one thread, so set
 `--nproc` near the core count. Note that with `K == nproc` every worker runs
 exactly one mock, so progress appears all at once at the end rather than
 incrementally.
+
+**Sizing a longer run: `n/tau` is `nsteps/tau`, and walkers do not enter it.**
+The short run's confound is chain length, so it is fixed by lengthening, not by
+widening:
+
+| | n/tau | cost |
+|---|---|---|
+| 32 walkers x 1200 steps | 34 | 1.0x |
+| 256 walkers x 4000 steps | 114 | 25.0x |
+| 32 walkers x 4000 steps | 114 | **3.1x** |
+
+Raising walkers to 256 reaches the same `n/tau` for eight times the price —
+18 h per mock against 2. `bash run_long_ensemble.sh [config]` uses the third
+row.
