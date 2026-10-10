@@ -44,6 +44,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # pipeline/
 ROOT = os.path.dirname(HERE)                        # DINGO_development/
@@ -305,9 +306,22 @@ def cmd_ensemble(args):
     ctx = mp.get_context('spawn')
     LOG.info(f'running {args.K} mocks on {args.nproc} processes '
              f'({args.nwalkers}x{args.nsteps} after {args.nburn} burn each)')
+    # imap_unordered rather than map, so each mock is reported as it lands. With
+    # map this printed nothing at all until every mock had finished -- on this
+    # machine a mock is ~28 minutes, so a K=20 run was silent for over an hour
+    # and there was no way to tell progress from a hang.
+    t0 = time.time()
+    results = []
     with ctx.Pool(args.nproc) as pool:
-        results = pool.map(_ensemble_worker, jobs)
+        for r in pool.imap_unordered(_ensemble_worker, jobs):
+            results.append(r)
+            n, el = len(results), time.time() - t0
+            rate = el/n
+            LOG.info(f'  mock {r[0]:>3} {"ok" if r[1] is not None else "FAILED"} '
+                     f'| {n}/{args.K} done in {el/60:.1f} min '
+                     f'| eta {max(0.0, (args.K - n)*rate)/60:.1f} min')
 
+    results.sort(key=lambda r: r[0])
     good = [r for r in results if r[1] is not None]
     LOG.info(f'{len(good)}/{args.K} mocks completed')
     if len(good) < 3:
