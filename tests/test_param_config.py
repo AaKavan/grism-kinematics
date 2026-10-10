@@ -115,14 +115,19 @@ def test_yaml_scientific_notation_is_a_string_not_a_float():
     assert fitting.ensure_float_like('-1e10') == pytest.approx(-1e10)
 
 
-@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(os.path.dirname(p)))
-def test_v_sys_is_registered_but_frozen_in_every_shipped_config(cfg_path):
-    '''v_sys must exist everywhere and be free nowhere.
+@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(p))
+def test_v_sys_is_frozen_unless_the_config_is_a_vsys_variant(cfg_path):
+    '''v_sys must exist in every config, and be free only where that is the point.
 
     Every shipped config has `fit: true` as its stage default, so if v_sys were
     injected through the default block it would become free in all of them and
     silently change every result. It is built with fit=False explicitly instead.
+
+    A config whose name says `vsys` exists precisely to free it, so this asserts
+    the opposite for those -- otherwise the variant could stop freeing v_sys and
+    the test that is supposed to cover it would pass anyway.
     '''
+    want_free = 'vsys' in os.path.basename(cfg_path)
     cfg = yaml.safe_load(open(cfg_path))
     defaults = [st['default'] for st in cfg['fitting']]
     overrides = [dict(st.get('override') or {}) for st in cfg['fitting']]
@@ -134,7 +139,9 @@ def test_v_sys_is_registered_but_frozen_in_every_shipped_config(cfg_path):
         raw, defaults, overrides, prefix='velocity')
     for i, st in enumerate(stages):
         assert 'velocity.v_sys' in st, f'stage {i+1} has no v_sys'
-        assert st['velocity.v_sys'].fit is False, f'stage {i+1} has v_sys FREE'
+        assert st['velocity.v_sys'].fit is want_free, (
+            f'stage {i+1}: v_sys is {"free" if st["velocity.v_sys"].fit else "frozen"}, '
+            f'expected {"free" if want_free else "frozen"} for {os.path.basename(cfg_path)}')
         assert float(st['velocity.v_sys'].tensor) == 0.0
 
 
