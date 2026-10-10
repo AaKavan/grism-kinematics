@@ -3024,12 +3024,18 @@ class KinematicsFitter(BaseFitter):
             disp = self._get_model_params(f'dispersion_{pupil}')
             h, w = cutout[3], cutout[2]
             with torch.no_grad():
-                s_y, s_x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
+                # device=self.device: without it the grid is built on the CPU
+                # while the velocity parameters live on the GPU, and the model
+                # raises "expected all tensors to be on the same device". That
+                # made every mock fail under CUDA.
+                s_y, s_x = torch.meshgrid(torch.arange(h, device=self.device),
+                                          torch.arange(w, device=self.device),
+                                          indexing='ij')
                 s_x = s_x.to(torch.float32)
                 s_y = s_y.to(torch.float32)
                 vz = kinematics.arctangent_disk_velocity_model(s_x, s_y, **velocity)
                 zeros = torch.zeros_like(s_x)
-                mock = torch.zeros(grism_shape, dtype=torch.float32)
+                mock = torch.zeros(grism_shape, dtype=torch.float32, device=self.device)
                 for dv, wt in zip(nodes, weights):
                     lambda_obs = self.lambda_rest*(1.0 + (vz + float(dv))/c)
                     mdx, mdy = disp['forward_model'](zeros, zeros, lambda_obs)
@@ -3039,8 +3045,13 @@ class KinematicsFitter(BaseFitter):
                         x_G, y_G, intensity*float(wt), (0, 0, grism_shape[1], grism_shape[0])
                     )
                 if sigma:
-                    mock = mock + float(sigma)*torch.randn(
-                        mock.shape, generator=gen, device=mock.device)
+                    # Draw on the CPU and move, rather than using a CUDA
+                    # generator: a seeded CPU draw gives the SAME numbers on both
+                    # devices, so a mock is reproducible regardless of where it
+                    # was made and ensembles run on CPU and GPU stay comparable.
+                    # (A CUDA generator would also need to match gen's device.)
+                    noise = torch.randn(mock.shape, generator=gen)
+                    mock = mock + float(sigma)*noise.to(mock.device)
             mocks[pupil] = mock
 
         if inplace:
