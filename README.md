@@ -135,6 +135,17 @@ Data-backed tests pin theta to a known MAP rather than fitting, so they stay
 fast and reproducible. `diagnostics/regression_snapshot.py record|check` freezes
 the end-to-end numbers a refactor must not move.
 
+## Use the GPU
+
+`BaseFitter` selects CUDA when it is available and the batched likelihood is
+~17x faster on it (measured: 1.1877 s to 0.0685 s per 32-walker step, so a
+production chain goes from days to hours). **Do not set `CUDA_VISIBLE_DEVICES=`
+on a production run** — that belongs in `tests/`, where determinism matters.
+
+GPU and CPU agree to ~4e-7 relative, which is float32 rounding, so keep
+`diagnostics/regression_snapshot.py` on CPU where its baseline was recorded, and
+do not switch device partway through a chain or across a resume.
+
 ## Before quoting an uncertainty
 
 Read [docs/validation.md](docs/validation.md). The short version, measured on

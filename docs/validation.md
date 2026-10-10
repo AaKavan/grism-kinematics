@@ -153,3 +153,46 @@ widening:
 Raising walkers to 256 reaches the same `n/tau` for eight times the price —
 18 h per mock against 2. `bash run_long_ensemble.sh [config]` uses the third
 row.
+
+## Run it on the GPU
+
+This machine has an RTX 4090 and the code supports it (`BaseFitter.__init__`
+selects CUDA when available; `get_grism_model_torch` takes a `device=`). Every
+run logged above was done with `CUDA_VISIBLE_DEVICES=` set empty, which disables
+it. That flag belongs in `tests/`, where determinism matters; it does not belong
+on a production run.
+
+Measured, ID15665, batched 32-walker likelihood:
+
+| | fit_all | per step | 5000 steps |
+|---|---|---|---|
+| CPU (1 thread) | 68 s | 1.1877 s | 99.0 min |
+| CUDA | 133 s | 0.0685 s | **5.7 min** |
+
+**17x on the chain.** `fit_all` is slower on the GPU because Adam drives the
+scalar path, which is many small kernels where launch overhead dominates — but
+it is a minute against hours.
+
+What that changes:
+
+| run | CPU | GPU |
+|---|---|---|
+| one ensemble mock (32w x 5000) | 1.6 h | 0.1 h |
+| ID15665 production (256w x 10000) | 26.4 h | 1.5 h |
+| ID21636 showcase (256w x 35000) | 3.8 days | 5.3 h |
+
+### It is not bit-identical, and that is fine
+
+CPU and GPU agree to 3.7e-7 relative, against a float32 epsilon of 1.2e-7 — the
+model is float32 throughout, so this is reduction-order rounding, not a
+difference in what is computed. On lnL ~ 9420 that is an absolute 0.0012, which
+is negligible beside the O(1) differences that drive MCMC acceptance.
+
+Two consequences worth stating:
+
+- **Keep `diagnostics/regression_snapshot.py` on CPU.** It compares with exact
+  float equality, so a GPU run reports a regression that is really just
+  float32 rounding. The baseline was recorded on CPU and should stay there.
+- **Do not mix devices within one chain**, including across a resume. The
+  checkpoint fingerprint does not record the device, so a chain half-sampled on
+  each would concatenate two very slightly different posteriors.
