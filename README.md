@@ -135,6 +135,14 @@ Data-backed tests pin theta to a known MAP rather than fitting, so they stay
 fast and reproducible. `diagnostics/regression_snapshot.py record|check` freezes
 the end-to-end numbers a refactor must not move.
 
+## Before quoting an uncertainty
+
+Read [docs/validation.md](docs/validation.md). The short version, measured on
+ID15665: the posterior widths are **understated by roughly 3x** for the rotation
+amplitude, position angle is the one well-calibrated parameter, and the grism
+registration offset is shrunk toward zero by ~20% with coverage 0.00. Multiply
+by the per-parameter inflation factor before quoting anything.
+
 ## Diagnostics
 
 | | |
