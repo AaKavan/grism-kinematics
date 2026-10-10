@@ -111,7 +111,40 @@ a −49% bias. So freeing it buys a 40% reduction in the headline parameter's bi
 at the price of a new parameter that cannot be quoted. Promising, not settled,
 which is why it lives in a variant config rather than the production one.
 
-## The caveat on the inflation factor
+## Confirmed at production chain length
+
+The run above used short chains, and I expected that to be the explanation: an
+under-explored chain reports a posterior that is too narrow, which would inflate
+the ratio artificially. **That was wrong.** Re-run at n/tau ~ 114 (32 walkers x
+4000 steps after 1000 burn, K = 12) the inflation does not shrink — it grows.
+
+| parameter | short, n/tau~34 | long, n/tau~114 | |
+|---|---|---|---|
+| velocity.V_sini | 3.21 | **3.92** | +22% |
+| velocity.R_v | 2.59 | 3.05 | +18% |
+| velocity.x0_v | 2.12 | 1.58 | −25% |
+| velocity.y0_v | 3.22 | 3.41 | +6% |
+| velocity.theta_v | 1.03 | **0.98** | −5% |
+| velocity.inc_v | 0.93 | 0.96 | +3% |
+| image.R.dx | 7.24 | **9.67** | +34% |
+| image.R.dy | 0.95 | 1.16 | +22% |
+
+So the over-confidence is a property of the likelihood, not of how long the
+chain ran. **For V_sini the correction is x3.9: the quoted ±2.8 km/s should be
+±11 km/s.** Coverage is 0.33 against a nominal 0.68, consistent across both
+runs. The bias fell from +3.65 to +1.74 km/s with the longer chains, so the
+*centre* is fine; it is the *width* that is wrong.
+
+`theta_v` holds at 0.98 — the geometry stays honest at both chain lengths,
+which is the result the two-direction argument depends on. `image.R.dx` gets
+worse: inflation 9.67 and coverage still exactly 0.00.
+
+One caveat that remains: K = 12 here against K = 20 before, so the scatter
+column carries ~21% sampling uncertainty rather than ~16%. The 11.04 → 12.71
+move in V_sini's scatter is within that. The *direction* is not in doubt; the
+factor is ~3–4, not 3.92 to three figures.
+
+## The original caveat, now resolved
 
 The ensemble mocks run **32 walkers × 1200 steps after 400 burn**, against a
 production chain of 256 × 8000. At τ ≈ 35 that is n/τ ≈ 34, below the 50 the
