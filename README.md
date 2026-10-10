@@ -68,6 +68,25 @@ Supported filters: F277W, F322W2, F335M, F356W, F360M, F410M, F444W, F480M.
 export SAPPHIRES_CAT_DIR=/path/to/sapphires_edr_catalogs
 ```
 
+## One environment for geko and DINGO
+
+`bash env/make_grism_env.sh` builds a conda env called `grism` that runs both,
+sharing the GPU, and registers a Jupyter kernel for it.
+
+The split into `dingo` (3.12, torch) and `geko_clean` (3.11, jax) was never
+forced: geko's `requires-python` is `>=3.8` with no upper bound and DINGO needs
+`>=3.12`, so 3.12 satisfies both. The real question was CUDA — torch ships
+CUDA 13 wheels, jax ships CUDA 12 — and those are *differently named* packages
+(`nvidia-cublas` vs `nvidia-cublas-cu12`), so pip installs both and the driver
+serves both. Verified: torch and jax each run a GPU matmul in the same process.
+
+Two settings the script bakes in, both of which bite if missed:
+
+- `XLA_PYTHON_CLIENT_PREALLOCATE=false` — jax otherwise reserves 75% of the GPU
+  on first use and starves torch.
+- `setuptools<81` — `jax_cosmo` imports `pkg_resources`, which setuptools 81
+  removed and python 3.12 does not bundle.
+
 ## Running a source
 
 ```bash
