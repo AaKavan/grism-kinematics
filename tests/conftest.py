@@ -71,8 +71,26 @@ def in_data_dir(grism_cal, monkeypatch):
     return os.path.join(REPO, 'data')
 
 
+@pytest.fixture(scope='session')
+def staged():
+    """Skip a test whose source has no staged FITS.
+
+    The cutouts are not in the repository -- they are SAPPHIRES EDR products and
+    are gitignored -- so a fresh clone can run the pure tests but not the
+    data-backed ones. Those must SKIP with a clear reason rather than fail with
+    a FileNotFoundError that looks like a bug in the code.
+    """
+    def _require(sid):
+        d = os.path.join(REPO, 'data', sid)
+        missing = [f for f in ('R.fits', 'C.fits') if not os.path.exists(os.path.join(d, f))]
+        if missing:
+            pytest.skip(f'{sid}: no staged {", ".join(missing)} (data is not in the repo)')
+        return d
+    return _require
+
+
 @pytest.fixture
-def fitter(in_data_dir):
+def fitter(in_data_dir, staged):
     '''Build a KinematicsFitter for a source id, without fitting.
 
     Construction is dominated by load_nircam_wfss_model (ASCII tables + splines),
@@ -82,5 +100,6 @@ def fitter(in_data_dir):
     from dingo import fitting as _f
 
     def _make(sid):
+        staged(sid)
         return _f.KinematicsFitter(config_path=f'{sid}/config_kinematics.yaml')
     return _make

@@ -8,7 +8,7 @@ posterior with emcee, and writes the chain, diagnostics and plots.
     /opt/anaconda3/envs/DINGO/bin/python run_mcmc_ID15665.py [--quick]
 
 Must be run from a directory where the config's relative `path:` entries resolve
-(Archive_6/ for the ID15665 config); the script chdir's there itself.
+(data/ for the shipped configs); the script chdirs there itself.
 '''
 
 import argparse

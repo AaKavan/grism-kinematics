@@ -3,10 +3,29 @@ __pycache__/
 *.egg-info/
 .ipynb_checkpoints/
 .DS_Store
+.pytest_cache/
 
-# MCMC products. Chains are 13-150 MB each and are regenerable from the config
-# plus the staged FITS; the config is the artifact worth versioning, not the
-# chain. Files already tracked stay tracked -- this only stops new ones.
-results/**/*.npz
-results/**/*.log
-results/**/*.png
+# ---------------------------------------------------------------------------
+# This repository holds CODE. Observations and fit products stay out of it.
+#
+# Both are reproducible from what IS tracked: the staged FITS come from the
+# SAPPHIRES EDR release, and every result is regenerable from a config plus
+# `python -m dingo.run <ID>`. The config is the artifact worth versioning -- it
+# is the thing that records what was fitted and why -- and dingo.catalogs
+# generates configs from the catalogue, so the provenance chain is complete
+# without committing a single byte of data.
+# ---------------------------------------------------------------------------
+
+# Staged cutouts (R/C grism + direct image per source). Configs are KEPT.
+data/**/*.fits
+
+# Chains, checkpoints, derived posteriors, plots, run logs.
+results/
+logs/
+
+# Superseded notebooks and a duplicate copy of the ID15665 cutouts.
+Archive_6/
+
+# Scratch output from the figure and map scripts.
+maps/
+*.log

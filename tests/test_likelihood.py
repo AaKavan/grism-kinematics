@@ -55,11 +55,12 @@ SOURCES = sorted(MAP)
 
 
 @pytest.fixture(scope='module')
-def prepared(request, grism_cal):
+def prepared(request, grism_cal, staged):
     '''Fitter at the pinned MAP with the noise model frozen there. No fit.'''
     import os
     from dingo import fitting
     sid = request.param
+    staged(sid)          # skip cleanly when the cutouts are not staged
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cwd = os.getcwd()
     os.chdir(os.path.join(repo, 'data'))

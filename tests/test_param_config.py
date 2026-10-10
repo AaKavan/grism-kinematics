@@ -224,6 +224,7 @@ def test_checkpoint_path_stays_inside_the_repo(cfg_path):
     assert resolved.startswith(REPO + os.sep), f'{ckpt} resolves outside the repo'
 
 
+@pytest.mark.data
 def test_an_unimplemented_rotation_curve_raises(tmp_path, monkeypatch):
     '''`velocity.model` is not in ALLOWED_PARAM_KEYS, so it was dropped when the
     cfgs were built and never read. Every config says `model: arctan` and would
@@ -245,6 +246,8 @@ def test_an_unimplemented_rotation_curve_raises(tmp_path, monkeypatch):
     cal = os.environ.get('GRISM_CAL_DIR') or os.path.join(os.path.dirname(REPO), 'grism_cal')
     if not os.path.isdir(cal):
         pytest.skip('no grism calibration directory')
+    if not os.path.exists(os.path.join(src, 'R.fits')):
+        pytest.skip('ID21636 cutouts are not staged (data is not in the repo)')
     monkeypatch.setenv('GRISM_CAL_DIR', cal)
     monkeypatch.chdir(tmp_path)
     from dingo import fitting as _f
