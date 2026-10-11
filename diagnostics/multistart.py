@@ -43,9 +43,12 @@ logging.disable(logging.WARNING)
 from dingo import fitting                                   # noqa: E402
 
 
-def one_start(cfg, device, theta0=None):
+def one_start(cfg, device, theta0=None, maxiter_scale=1.0):
     '''Run the full staged fit once. theta0=None uses the config's own values.'''
     f = fitting.KinematicsFitter(config_path=cfg, device=device)
+    if maxiter_scale != 1.0:
+        for stage in f.config['fitting']:
+            stage['maxiter'] = int(stage['maxiter']*maxiter_scale)
     if theta0 is not None:
         f.set_params_dict(theta0)
     f.fit_all()
@@ -64,6 +67,13 @@ def main():
                     help="cpu (default) leaves the GPU free for chains; Adam is "
                          "faster on CPU anyway -- it drives the scalar path")
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--maxiter-scale', type=float, default=1.0,
+                    help='multiply every stage maxiter by this. fit_report has been '
+                         'reporting "the loss is still falling" on these fits, so part '
+                         'of the spread between starts may be incomplete convergence '
+                         'rather than distinct minima. Re-run with the SAME seed and a '
+                         'larger scale: if the losses collapse toward fewer values, it '
+                         'was convergence; if they hold apart, the minima are real.')
     ap.add_argument('--rtol', type=float, default=1e-3,
                     help='two losses within this relative tolerance are one basin')
     args = ap.parse_args()
@@ -75,7 +85,7 @@ def main():
     torch.set_num_threads(2)
 
     # The config's own start, which is what every run so far has used.
-    loss_cfg, theta_cfg = one_start(cfg, device)
+    loss_cfg, theta_cfg = one_start(cfg, device, maxiter_scale=args.maxiter_scale)
     print(f'{tag}: config start -> loss {loss_cfg:.6g}')
 
     # Independent starts drawn from the SAMPLED priors. prepare_mcmc gives the
@@ -84,15 +94,18 @@ def main():
     setup = probe.prepare_mcmc()
     rng = np.random.default_rng(args.seed)
 
+    iters = [st['maxiter'] for st in probe.config['fitting']]
     print(f'running {args.N} starts from the prior on {args.device} '
-          f'({len(setup["names"])} free parameters)...')
+          f'({len(setup["names"])} free parameters, maxiter '
+          f'{"x%.3g -> " % args.maxiter_scale if args.maxiter_scale != 1 else ""}'
+          f'{[int(i*args.maxiter_scale) for i in iters]})...')
     out = []
     for i in range(args.N):
         draw = probe._draw_mcmc_prior(rng)
         theta = {n: float(v) for n, v in zip(setup['param_names'], draw)
                  if not n.startswith('noise.')}
         try:
-            loss, th = one_start(cfg, device, theta)
+            loss, th = one_start(cfg, device, theta, args.maxiter_scale)
             out.append((loss, th))
             print(f'  start {i+1:>3}/{args.N}  loss {loss:.6g}')
         except Exception as exc:
