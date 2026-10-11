@@ -56,10 +56,16 @@ from dingo import galaxy, fitting
 warnings.filterwarnings('ignore')
 LOG = logging.getLogger('inclination')
 
-SCI_DIR = os.path.join(GK, 'EDR_data/sapphires_edr_nircam_sci')
-ERR_DIR = os.path.join(GK, 'EDR_data/sapphires_edr_nircam_err')
-DEFAULT_PSF = os.path.join(
-    GK, 'github_backups/galaxy_kinematics/15665/geko_fitting/psfs/webbPSF_F444W.fits')
+# The mosaics and the PSF live outside the repo, and where they live is a
+# property of the machine, not of the code. Default to the same ~/EDR_data that
+# dingo.catalogs uses, and let the environment override it -- the old
+# Galaxy_Kinematics/ sibling layout no longer exists.
+EDR_ROOT = os.environ.get('EDR_DATA_DIR', os.path.expanduser('~/EDR_data'))
+SCI_DIR = os.environ.get('EDR_SCI_DIR', os.path.join(EDR_ROOT, 'sapphires_edr_nircam_sci'))
+ERR_DIR = os.environ.get('EDR_ERR_DIR', os.path.join(EDR_ROOT, 'sapphires_edr_nircam_err'))
+DEFAULT_PSF = os.environ.get(
+    'F444W_PSF',
+    os.path.expanduser('~/kinematics/september_clean_env_runs/6084/psfs/webbPSF_F444W.fits'))
 
 PARAM_NAMES = ['log_I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta', 'sky']
 
