@@ -186,6 +186,56 @@ def amplitude_key(names):
     return next((k for k in AMPLITUDE_KEYS if k in have), None)
 
 
+def with_rotation_amplitude(params, inc_rad=None, prefix=''):
+    """Return a copy of `params` carrying BOTH V_rot and V_sini.
+
+    `amplitude_key` answers the question for a list of chain parameter names.
+    This answers it for a parameter *dict*, which is the other half of the same
+    problem: a config defines exactly one of the two, but the downstream plots,
+    the circular-speed map, the mass profile and the Adam comparison all read
+    `params['V_rot']` by name, at nine separate sites.
+
+    Branching at each site is what was tried, and what failed: the three
+    `names.index` sites were converted and the dict lookups were not, so
+    ID15665 -- the one V_sini config in the sample -- died at the velocity-field
+    plot AFTER a completed 32-minute chain had been written to disk. Normalise
+    once, here, and those sites need no knowledge of the parameterisation.
+
+    `inc_rad` supplies the inclination for a fixed-i run, where the fit has no
+    `inc_v` of its own. With no inclination from either source there is nothing
+    to convert with, so `params` comes back unchanged rather than guessed at.
+    `prefix` is '' for the bare dicts from `get_params()` and 'velocity.' for
+    the dotted ones.
+    """
+    out = dict(params)
+    k_rot, k_sini, k_inc = prefix + 'V_rot', prefix + 'V_sini', prefix + 'inc_v'
+    have_rot, have_sini = k_rot in out, k_sini in out
+    if have_rot == have_sini:                 # both already, or neither to derive from
+        return out
+
+    # dict.get(k, default) returns a stored None rather than the fallback, and
+    # get_params() does hand back None for a parameter the fit held fixed.
+    inc = out.get(k_inc)
+    if inc is None:
+        inc = inc_rad
+    try:
+        v = float(out[k_rot] if have_rot else out[k_sini])
+        inc = float(inc)
+    except (TypeError, ValueError):           # None, or a non-numeric placeholder
+        return out
+
+    # sin(i) -> 0 is edge-on in the other direction: V_rot = V_sini/sin(i) diverges.
+    # Clip rather than return inf, matching get_mcmc_percentiles.
+    s = np.sin(np.clip(inc, 1e-6, None))
+    if have_rot:
+        out[k_sini] = v*s
+    else:
+        out[k_rot] = v/s
+    if out.get(k_inc) is None:        # setdefault keeps a stored None; the
+        out[k_inc] = inc              # plots call float() on this key
+    return out
+
+
 def check_unused_overrides(overrides, prefixes, what):
     '''Raise if any `override:` key was never consumed by a parameter.
 

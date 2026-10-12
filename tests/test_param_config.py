@@ -260,3 +260,74 @@ def test_an_unimplemented_rotation_curve_raises(tmp_path, monkeypatch):
     from dingo import fitting as _f
     with pytest.raises(NotImplementedError, match='arctan'):
         _f.KinematicsFitter(config_path='ID21636/config_kinematics.yaml')
+
+
+# --------------------------------------------------------------------------
+# V_rot / V_sini: the two names for one quantity.
+#
+# amplitude_key() covers the chain-name side. These cover the parameter-dict
+# side, which is where ID15665 -- the sample's only V_sini config -- died at
+# the velocity-field plot after a completed 32-minute chain had been written.
+# --------------------------------------------------------------------------
+import numpy as np
+
+
+def test_with_rotation_amplitude_derives_V_rot_from_a_V_sini_config():
+    '''The fixed-inclination case: the fit has no inc_v, so the caller supplies it.'''
+    out = fitting.with_rotation_amplitude({'V_sini': 272.5, 'R_v': 3.35}, 0.5040)
+    assert out['V_rot'] == pytest.approx(272.5/np.sin(0.5040))
+    assert out['V_sini'] == 272.5          # the sampled value is never overwritten
+    assert out['inc_v'] == pytest.approx(0.5040)
+    assert out['R_v'] == 3.35              # everything else passes through
+
+
+def test_with_rotation_amplitude_derives_V_sini_from_a_V_rot_config():
+    out = fitting.with_rotation_amplitude({'V_rot': 506.8591, 'inc_v': 0.5040})
+    assert out['V_sini'] == pytest.approx(506.8591*np.sin(0.5040))
+
+
+def test_with_rotation_amplitude_round_trips():
+    a = fitting.with_rotation_amplitude({'V_rot': 506.8591, 'inc_v': 0.5040})
+    b = fitting.with_rotation_amplitude({'V_sini': a['V_sini'], 'inc_v': 0.5040})
+    assert b['V_rot'] == pytest.approx(506.8591)
+
+
+def test_with_rotation_amplitude_handles_the_dotted_chain_names():
+    out = fitting.with_rotation_amplitude(
+        {'velocity.V_sini': 272.5}, 0.5040, prefix='velocity.')
+    assert out['velocity.V_rot'] == pytest.approx(272.5/np.sin(0.5040))
+
+
+def test_with_rotation_amplitude_replaces_a_stored_None_inclination():
+    '''get_params() returns None for a parameter the fit held fixed, and
+    dict.get(k, default) hands that None back instead of the fallback. The
+    plotting code calls float() on this key.'''
+    out = fitting.with_rotation_amplitude({'V_sini': 272.5, 'inc_v': None}, 0.5040)
+    assert out['inc_v'] == pytest.approx(0.5040)
+    assert out['V_rot'] == pytest.approx(272.5/np.sin(0.5040))
+
+
+def test_with_rotation_amplitude_leaves_unconvertible_dicts_alone():
+    '''No inclination from either source, or a non-numeric amplitude: return the
+    dict unchanged rather than invent a conversion.'''
+    assert fitting.with_rotation_amplitude({'V_sini': 272.5}) == {'V_sini': 272.5}
+    assert fitting.with_rotation_amplitude({'V_sini': None, 'inc_v': 0.5}) == \
+        {'V_sini': None, 'inc_v': 0.5}
+    both = {'V_rot': 1.0, 'V_sini': 0.5, 'inc_v': 0.5}
+    assert fitting.with_rotation_amplitude(both) == both
+
+
+def test_with_rotation_amplitude_does_not_mutate_its_argument():
+    src = {'V_sini': 272.5}
+    fitting.with_rotation_amplitude(src, 0.5040)
+    assert src == {'V_sini': 272.5}
+
+
+def test_every_sample_config_uses_exactly_one_amplitude_name():
+    '''A config carrying both, or neither, would make amplitude_key's answer
+    arbitrary. This is the invariant the helpers rely on.'''
+    for path in sorted(glob.glob(os.path.join(REPO, 'data', 'ID*', 'config_kinematics.yaml'))):
+        raw = yaml.safe_load(open(path))
+        vel = raw.get('velocity', {}) or {}
+        have = [k for k in ('V_rot', 'V_sini') if k in vel]
+        assert len(have) == 1, f'{os.path.basename(os.path.dirname(path))}: {have}'
