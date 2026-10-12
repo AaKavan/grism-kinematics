@@ -141,6 +141,31 @@ SOURCE_HINTS = {
 }
 
 
+def find_spec1d_dir(cat_dir=None):
+    """Where the 1D spectra live, or None.
+
+    They are not necessarily inside the catalogue directory. In the EDR layout
+    `sapphires_edr_catalogs/` and `sapphires_edr_1d_spec/` are SIBLINGS, so
+    joining SPEC1D_DIRNAME onto find_cat_dir() points at a path that does not
+    exist -- and lookup_module then returned None for every source, which the
+    caller turned into a silent module 'A'. Four of the eight staged sources are
+    on B, so that was a wrong trace and dispersion solution for half the sample,
+    with nothing raised. Look in the catalogue directory, its parent, and the
+    candidate roots.
+    """
+    cat = cat_dir or find_cat_dir()
+    tried = []
+    for base in [cat, os.path.dirname(os.path.abspath(cat))] + CANDIDATE_DIRS:
+        path = os.path.join(base, SPEC1D_DIRNAME)
+        if path in tried:
+            continue
+        tried.append(path)
+        if os.path.isdir(path):
+            return path
+    LOG.warning(f'no {SPEC1D_DIRNAME}/ directory found; looked in {tried}')
+    return None
+
+
 def lookup_module(source_id, grism='R', filter='F444W', cat_dir=None):
     '''
     Which NIRCam module a source was observed on, from the EDR 1D spectra.
@@ -153,8 +178,10 @@ def lookup_module(source_id, grism='R', filter='F444W', cat_dir=None):
 
     Returns 'A' or 'B', or None when no spectrum file exists.
     '''
-    cat_dir = cat_dir or find_cat_dir()
-    path = os.path.join(cat_dir, SPEC1D_DIRNAME,
+    spec_dir = find_spec1d_dir(cat_dir)
+    if spec_dir is None:
+        return None
+    path = os.path.join(spec_dir,
                         f'spec_1d_M0416_{filter}_ID{int(source_id)}_{grism}.fits')
     if not os.path.exists(path):
         LOG.warning(f'no 1D spectrum at {path}; cannot determine module')
@@ -293,8 +320,17 @@ fitting:
       # R_v is a turnover RADIUS: without this floor Adam happily returns a
       # negative one (ID21619 gave -0.011), which is unphysical and then blocks
       # MCMC initialisation. The grad student's working batch sets the same bound.
+      #
+      # The floor is 0.5, not 0, for two independent reasons. At exactly
+      # R_v = 0 the forward model is finite -- atan(r/0) = pi/2 -- but its
+      # gradient is 0*(-inf) = NaN, and NaN survives everything downstream:
+      # clamp_(min=0) leaves NaN as NaN, and the railing check
+      # `v < lo or v > hi` is False for NaN, so a dead parameter is reported as
+      # 0% railed. Second, `init: adam` seeds the walkers at the optimizer's
+      # answer and the MCMC prior below is log_uniform from 0.5, so an Adam R_v
+      # under 0.5 starts every walker outside the prior, at -inf.
       velocity.R_v:
-        min: 0
+        min: 0.5
       velocity.inc_v:
         min: 0
         max: 1.57
@@ -389,6 +425,24 @@ INC_GAUSSIAN = '''\
     velocity.inc_v:   {{type: gaussian, mu: {mu:.4f}, sigma: {sigma:.4f}, min: 0.0873, max: 1.4835}}'''
 
 
+def _require_module(source_id, grism, filter, cat_dir, argname):
+    """The module letter, or a refusal. Never a guess.
+
+    `module` selects the trace and dispersion calibration tables. Getting it
+    wrong does not raise: it rectifies the wrong pixels and returns a plausible
+    number, which is the worst failure mode available here.
+    """
+    found = lookup_module(source_id, grism, filter, cat_dir)
+    if found is None:
+        raise ValueError(
+            f'cannot determine the NIRCam module for ID{source_id} grism {grism}: '
+            f'no usable 1D spectrum was found (see the warning above). The module '
+            f'selects the trace and dispersion calibration, so it is never '
+            f'guessed. Stage the spectrum, or pass {argname}="A" / "B" to '
+            f'make_config if you know it independently.')
+    return found
+
+
 def make_config(source_id, outdir=None, module_R=None, module_C=None,
                 filter='F444W', lambda_rest=None, r_fit=None,
                 inc_mu=None, inc_sigma=0.0436, sign=None,
@@ -418,13 +472,32 @@ def make_config(source_id, outdir=None, module_R=None, module_C=None,
     source_id = int(source_id)
     hints = SOURCE_HINTS.get(source_id, {})
 
-    # module drives which calibration table is loaded -- never guess it
+    # module drives which calibration table is loaded -- never guess it. It used
+    # to fall back to 'A' directly under that sentence, so a source whose 1D
+    # spectrum is missing or misnamed silently got module A's trace and
+    # dispersion solution -- and three of the seven known sources are on B. A
+    # wrong trace does not fail, it fits the wrong pixels.
     if module_R is None:
-        module_R = lookup_module(source_id, 'R', filter, cat_dir) or 'A'
+        module_R = _require_module(source_id, 'R', filter, cat_dir, 'module_R')
     if module_C is None:
-        module_C = lookup_module(source_id, 'C', filter, cat_dir) or 'A'
+        module_C = _require_module(source_id, 'C', filter, cat_dir, 'module_C')
     if sign is None:
-        sign = hints.get('sign', 1)
+        # sign only seeds V_rot = 300*sign, but the seed decides which basin Adam
+        # finds: three of the seven known sources rotate the other way, and
+        # starting one of those at +V_rot is how ID3700 and ID21619 failed.
+        # Nothing here can derive it, so an unknown source says so rather than
+        # inherit a silent +1.
+        sign = hints.get('sign')
+        if sign is None:
+            sign = 1
+            LOG.warning(
+                f'ID{source_id} is not in SOURCE_HINTS: starting at sign=+1 '
+                f'(V_rot=+{V_rot:g}) because nothing here can measure the '
+                f'rotation sense. If Adam converges to a mirror solution, the '
+                f'MCMC cannot initialise, or the loss looks poor, re-run '
+                f'make_config(..., sign=-1) and compare. '
+                f'diagnostics/multistart.py reports whether the start is in the '
+                f'best basin.')
     if R_v is None:
         R_v = hints.get('R_v', 2)
 

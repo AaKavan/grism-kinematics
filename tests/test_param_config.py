@@ -331,3 +331,64 @@ def test_every_sample_config_uses_exactly_one_amplitude_name():
         vel = raw.get('velocity', {}) or {}
         have = [k for k in ('V_rot', 'V_sini') if k in vel]
         assert len(have) == 1, f'{os.path.basename(os.path.dirname(path))}: {have}'
+
+
+# --------------------------------------------------------------------------
+# Running a source the sample has never seen.
+#
+# Each of these guards a failure that does not raise: a wrong module fits the
+# wrong pixels, and an Adam bound below the MCMC prior floor seeds every walker
+# at -inf. Both used to be reachable by generating a config on a fresh machine.
+# --------------------------------------------------------------------------
+def test_adam_R_v_floor_is_never_below_the_mcmc_prior_floor():
+    '''`init: adam` seeds the walkers at the optimizer's answer. An Adam bound
+    that admits R_v below the prior's own floor starts every walker outside the
+    prior, which is -inf for all of them and no chain at all.'''
+    for path in sorted(glob.glob(os.path.join(REPO, 'data', 'ID*', 'config_kinematics.yaml'))):
+        cfg = yaml.safe_load(open(path))
+        tag = os.path.basename(os.path.dirname(path))
+        prior_min = cfg['mcmc']['priors']['velocity.R_v']['min']
+        floors = [(st.get('override') or {})['velocity.R_v']['min']
+                  for st in cfg['fitting']
+                  if 'velocity.R_v' in (st.get('override') or {})
+                  and 'min' in (st.get('override') or {})['velocity.R_v']]
+        assert floors, f'{tag}: no Adam floor on velocity.R_v at all'
+        for f in floors:
+            assert f >= prior_min, f'{tag}: Adam floor {f} < MCMC prior floor {prior_min}'
+
+
+def test_R_v_is_never_floored_at_exactly_zero():
+    '''At R_v = 0 the model is finite but its gradient is 0*(-inf) = NaN, and
+    nothing downstream reports it: clamp_(min=0) leaves NaN alone and the
+    railing test `v < lo or v > hi` is False for NaN.'''
+    for path in sorted(glob.glob(os.path.join(REPO, 'data', 'ID*', 'config_kinematics.yaml'))):
+        cfg = yaml.safe_load(open(path))
+        for st in cfg['fitting']:
+            ov = (st.get('override') or {}).get('velocity.R_v') or {}
+            if 'min' in ov:
+                assert ov['min'] > 0, f'{os.path.basename(os.path.dirname(path))}: R_v floored at 0'
+
+
+def test_make_config_refuses_to_guess_the_module():
+    '''`module` selects the trace and dispersion calibration. It used to fall
+    back to 'A' when the 1D spectrum could not be found, and four of the eight
+    staged sources are on B.'''
+    from dingo import catalogs
+    with pytest.raises(ValueError, match='never.*guessed|cannot determine'):
+        catalogs._require_module(999999999, 'R', 'F444W', None, 'module_R')
+
+
+def test_find_spec1d_dir_accepts_the_sibling_layout(tmp_path):
+    '''sapphires_edr_catalogs/ and sapphires_edr_1d_spec/ are siblings, so
+    joining the spec dirname onto the catalogue dir finds nothing.'''
+    from dingo import catalogs
+    root = tmp_path / 'EDR'
+    (root / 'sapphires_edr_catalogs').mkdir(parents=True)
+    (root / catalogs.SPEC1D_DIRNAME).mkdir()
+    found = catalogs.find_spec1d_dir(str(root / 'sapphires_edr_catalogs'))
+    assert found == str(root / catalogs.SPEC1D_DIRNAME)
+
+
+def test_find_spec1d_dir_returns_none_when_there_is_nothing(tmp_path):
+    from dingo import catalogs
+    assert catalogs.find_spec1d_dir(str(tmp_path)) is None

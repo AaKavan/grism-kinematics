@@ -74,8 +74,14 @@ fitting:
       # R_v is a turnover RADIUS: without this floor Adam happily returns a
       # negative one (ID21619 gave -0.011), which is unphysical and then blocks
       # MCMC initialisation. The grad student's working batch sets the same bound.
+      # Floored at 0.5, not 0: at exactly R_v = 0 the forward model is finite
+      # (atan(r/0) = pi/2) but its gradient is 0*(-inf) = NaN, and NaN survives
+      # everything downstream -- clamp_(min=0) leaves NaN as NaN, and the
+      # railing check `v < lo or v > hi` is False for NaN, so a dead parameter
+      # is reported as 0% railed. 0.5 also matches the MCMC prior floor below,
+      # so `init: adam` cannot seed the walkers outside their own prior.
       velocity.R_v:
-        min: 0
+        min: 0.5
       velocity.inc_v:
         min: 0
         max: 1.57
