@@ -172,6 +172,10 @@ def _likelihood_failed(exc, where):
 
 AMPLITUDE_KEYS = ('velocity.V_rot', 'velocity.V_sini')
 
+# Marks chain files belonging to a fixed-inclination run, which samples one
+# parameter fewer than the free-inclination one and so cannot share them.
+FIXED_INC_SUFFIX = '_fixedinc'
+
 
 def amplitude_key(names):
     """Which rotation-amplitude parameter this fit uses, or None.
@@ -184,6 +188,57 @@ def amplitude_key(names):
     """
     have = set(names)
     return next((k for k in AMPLITUDE_KEYS if k in have), None)
+
+
+def fix_inclination(fitter, inc_rad):
+    """Pin velocity.inc_v for every stage, before Adam runs.
+
+    The grism measures V*sin(i), so a free inc_v is degenerate with the
+    amplitude (corr ~ -0.99) and the posterior is unusable. Fixing it from
+    imaging breaks that -- but only if Adam and the sampler see the SAME
+    inclination. Fitting at one inclination and freezing another afterwards
+    leaves the MAP, the frozen noise model and the posterior conditional on
+    different geometries.
+
+    Returns the fitter, so it can be chained onto the constructor.
+    """
+    for stage_cfg in fitter.param_config_lists['velocity']:
+        cfg = stage_cfg['velocity.inc_v']
+        with torch.no_grad():
+            cfg.tensor.data.fill_(float(inc_rad))
+        cfg.fit = False
+    # A sampled inc_v prior would now contradict the fixed value.
+    mcmc = fitter.config.setdefault('mcmc', {})
+    mcmc.setdefault('priors', {}).pop('velocity.inc_v', None)
+
+    # Dropping inc_v changes the sampled parameter SET, so this run cannot share
+    # a checkpoint with the free-inclination one -- resuming from it raises
+    # 'existing checkpoint parameter names do not match this configuration'.
+    # Give it its own file rather than make the caller remember to.
+    for key in ('checkpoint', 'backend'):
+        path = mcmc.get(key)
+        if path:
+            mcmc[key] = fixed_inc_path(path)
+    return fitter
+
+
+def fixed_inc_path(path):
+    '''Sibling of `path` marked as a fixed-inclination run, idempotent.
+
+    `ID16887_chain_checkpoint.npz` -> `ID16887_chain_fixedinc_checkpoint.npz`.
+    The suffix goes before a trailing `_checkpoint` rather than at the end, to
+    match the files the earlier notebook already wrote under that convention --
+    otherwise a rerun silently ignores an existing checkpoint and resamples.
+    '''
+    root, ext = os.path.splitext(str(path))
+    if FIXED_INC_SUFFIX in root:
+        return str(path)
+    stem = '_checkpoint'
+    if root.endswith(stem):
+        root = root[:-len(stem)] + FIXED_INC_SUFFIX + stem
+    else:
+        root += FIXED_INC_SUFFIX
+    return root + ext
 
 
 def with_rotation_amplitude(params, inc_rad=None, prefix=''):
