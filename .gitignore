@@ -19,6 +19,12 @@ __pycache__/
 # Staged cutouts (R/C grism + direct image per source). Configs are KEPT.
 data/**/*.fits
 
+# psf/webbPSF_F444W.fits IS tracked, deliberately, despite being a FITS file.
+# It is a calibration input rather than an observation or a fit product, it is
+# 743 KB, and without it a fresh clone cannot run the morphology fit at all.
+# It previously lived in an old run's output directory, so archiving that run
+# silently broke diagnostics/measure_inclination.py.
+
 # Chains, checkpoints, derived posteriors, plots, run logs.
 results/
 logs/

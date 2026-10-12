@@ -63,9 +63,10 @@ LOG = logging.getLogger('inclination')
 EDR_ROOT = os.environ.get('EDR_DATA_DIR', os.path.expanduser('~/EDR_data'))
 SCI_DIR = os.environ.get('EDR_SCI_DIR', os.path.join(EDR_ROOT, 'sapphires_edr_nircam_sci'))
 ERR_DIR = os.environ.get('EDR_ERR_DIR', os.path.join(EDR_ROOT, 'sapphires_edr_nircam_err'))
-DEFAULT_PSF = os.environ.get(
-    'F444W_PSF',
-    os.path.expanduser('~/kinematics/september_clean_env_runs/6084/psfs/webbPSF_F444W.fits'))
+# Kept inside the repo rather than pointed at a run directory: this is the only
+# file the morphology fit needs from outside the EDR release, and leaving it in
+# an old run's output meant archiving that run silently broke the fit.
+DEFAULT_PSF = os.environ.get('F444W_PSF', os.path.join(ROOT, 'psf', 'webbPSF_F444W.fits'))
 
 # The Sersic likelihood and the chi2/dof error inflation now live in
 # dingo.galaxy, because the kinematics notebook needs the SAME inflation and a

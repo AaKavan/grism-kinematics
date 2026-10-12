@@ -39,6 +39,44 @@ Two consequences worth knowing before trusting a result:
 - A systemic velocity shift and a velocity gradient both lower `R − C`.
   `compare_null_model()` is the statistic that says which the data prefer.
 
+## Where everything lives
+
+```
+~/kinematics/
+  grism-kinematics/   this repo
+  geko/               `import geko` resolves here -- AND it is what grism_cal/ points at
+  grism_cal/          GRISM_CAL_DIR: trace + dispersion calibration
+  stpsf_data/         PSF reference data (STPSF_PATH)
+  results/            run logs land here
+  archive/2026-10-12/ superseded material; see its WHAT_IS_THIS.md
+
+~/EDR_data/           the SAPPHIRES release: 1d/2d spectra, catalogues, mosaics
+~/backup_kinematics/  a Sept 23 snapshot, deliberately frozen
+```
+
+**`grism_cal/` holds almost no real files** -- it is ~60 symlinks into
+`geko/nircam_grism/FS_grism_config/`. Moving or renaming `geko/` breaks
+`grism_cal/`, which breaks `dingo/grism.py` and the whole test suite without any
+obvious error pointing at the cause. If the tests suddenly fail on calibration
+loading, check `find $GRISM_CAL_DIR -xtype l` for broken links first.
+
+Everything else the pipeline needs is inside this repo, including
+`psf/webbPSF_F444W.fits` -- it used to be read out of an old run directory,
+so archiving that run silently broke the morphology fit.
+
+Results and chains go to `results/<ID>/` and are gitignored; the repo holds
+code and configs only. A config is the artifact worth versioning, since it
+records what was fitted and why.
+
+### If your commits do not appear on GitHub
+
+Almost certainly the branch lost its upstream. Diagnose in one line:
+
+```bash
+git log origin/main..main      # non-empty = commits exist only on this machine
+git push -u origin main        # -u sets tracking so plain `git push` works after
+```
+
 ## Install
 
 ```bash
