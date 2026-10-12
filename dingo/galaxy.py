@@ -277,3 +277,97 @@ def full_psf_model_torch(x, y, psf, x_psf, y_psf, I_psf):
     # ---- 3) 缩放 ----
     I0 = torch.as_tensor(I_psf, device=device, dtype=dtype)
     return image*I0
+
+
+#%% error inflation for Sersic morphology fits
+
+SERSIC_FIT_PARAM_NAMES = ['log_I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta', 'sky']
+
+
+def make_sersic_log_prob(image, err, psf, mask, priors):
+    '''Gaussian log-likelihood for a PSF-convolved Sersic + flat sky.
+
+    `mask` is a KEEP mask: the pixels summed over. pysersic's `mask` argument is
+    the opposite convention (exclude), so anything sharing a mask between the two
+    has to invert it.
+
+    Returns (log_prob, model_image, n_data), where n_data is the number of kept
+    pixels -- the dof numerator in estimate_error_inflation below.
+    '''
+    ny, nx = image.shape
+    yy, xx = torch.meshgrid(torch.arange(ny), torch.arange(nx), indexing='ij')
+    xx = xx.to(torch.float32)
+    yy = yy.to(torch.float32)
+    t_psf = torch.tensor(psf, dtype=torch.float32)
+    t_img = torch.tensor(image, dtype=torch.float32)
+    t_err = torch.tensor(err, dtype=torch.float32)
+    t_mask = torch.tensor(np.asarray(mask, dtype=bool))
+    n_data = int(t_mask.sum())
+
+    def model_image(theta):
+        log_I_e, R_e, n, x0, y0, q, th, sky = [torch.tensor(float(v)) for v in theta]
+        model = full_sersic_model_torch(
+            xx, yy, t_psf, I_e=10.0**log_I_e, R_e=R_e, n=n, x0=x0, y0=y0, q=q, theta=th)
+        return model + sky
+
+    def log_prob(theta):
+        for value, (lo, hi) in zip(theta, priors):
+            if not (lo <= value <= hi):
+                return -np.inf
+        with torch.no_grad():
+            model = model_image(theta)
+            if not torch.isfinite(model).all():
+                return -np.inf
+            chi2 = float(torch.sum((((t_img - model)/t_err)[t_mask])**2))
+        return -0.5*chi2
+
+    return log_prob, model_image, n_data
+
+
+def estimate_error_inflation(image, err, psf, mask, priors, peak,
+                             q_mom, th_mom, cx, cy, log=None):
+    '''
+    sqrt(chi2/dof) at the best fit: the factor the ERR map must be scaled by so
+    that chi2/dof = 1. Returns 1.0 when the fit is already acceptable (never
+    deflates).
+
+    A single Sersic cannot describe a real galaxy at ~1000 sigma per pixel, so
+    the formal ERR-based errors are meaninglessly small: the uncertainty on q is
+    dominated by model inadequacy, not by photon noise. F444W sits at
+    chi2/dof ~ 435-700 on these sources, i.e. formal errors ~20x too narrow --
+    which is how q came to be reported as 0.4220 +- 0.0001.
+
+    It also matters numerically. On the raw ERR map NUTS responds to the implied
+    curvature by collapsing its step size to ~1e-8 and hitting max tree depth
+    (1023 leapfrog steps) every iteration, which neither converges nor terminates
+    in reasonable time.
+
+    Every backend fitting the same image must apply this, or they are not
+    sampling the same likelihood and cannot be compared.
+
+    `mask` is a KEEP mask (see make_sersic_log_prob). `peak`, `q_mom`, `th_mom`,
+    `cx`, `cy` seed the optimiser from image moments.
+    '''
+    from scipy.optimize import minimize
+
+    log_prob, _, n_data = make_sersic_log_prob(image, err, psf, mask, priors)
+    p_start = np.array([np.log10(max(peak, 1e-3)/3), 6.0, 1.0, cx, cy,
+                        np.clip(q_mom, 0.15, 0.98), th_mom, 0.0])
+    nll = lambda t: -log_prob(t)
+    # Nelder-Mead twice: the simplex collapses around a local scale on the first
+    # pass and restarting from the result is what actually reaches the minimum.
+    best = minimize(nll, p_start, method='Nelder-Mead',
+                    options={'maxiter': 40000, 'maxfev': 40000,
+                             'xatol': 1e-5, 'fatol': 1e-5})
+    best = minimize(nll, best.x, method='Nelder-Mead',
+                    options={'maxiter': 40000, 'maxfev': 40000,
+                             'xatol': 1e-5, 'fatol': 1e-5})
+    chi2_dof = 2*best.fun/(n_data - len(SERSIC_FIT_PARAM_NAMES))
+    msg = (f'chi2/dof = {chi2_dof:.3f}, no error inflation needed' if chi2_dof <= 1
+           else f'chi2/dof = {chi2_dof:.3f} -> inflating ERR by '
+                f'sqrt(chi2/dof) = {np.sqrt(chi2_dof):.2f}')
+    if log is not None:
+        log.info(msg)
+    else:
+        print(msg)
+    return 1.0 if chi2_dof <= 1 else float(np.sqrt(chi2_dof))

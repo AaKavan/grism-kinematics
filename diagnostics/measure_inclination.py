@@ -67,7 +67,19 @@ DEFAULT_PSF = os.environ.get(
     'F444W_PSF',
     os.path.expanduser('~/kinematics/september_clean_env_runs/6084/psfs/webbPSF_F444W.fits'))
 
-PARAM_NAMES = ['log_I_e', 'R_e', 'n', 'x0', 'y0', 'q', 'theta', 'sky']
+# The Sersic likelihood and the chi2/dof error inflation now live in
+# dingo.galaxy, because the kinematics notebook needs the SAME inflation and a
+# second copy would drift. Keep the local names: this module calls them in two
+# places and the pysersic/emcee backends must stay on one implementation.
+PARAM_NAMES = galaxy.SERSIC_FIT_PARAM_NAMES
+make_log_prob = galaxy.make_sersic_log_prob
+
+
+def estimate_error_inflation(image, err, psf, mask, priors, peak,
+                             q_mom, th_mom, cx, cy):
+    '''galaxy.estimate_error_inflation, logging through this module's LOG.'''
+    return galaxy.estimate_error_inflation(image, err, psf, mask, priors, peak,
+                                           q_mom, th_mom, cx, cy, log=LOG)
 
 
 def load_cutouts(ra, dec, band, size_arcsec):
@@ -184,71 +196,6 @@ def run_pysersic(image, err, psf, fit_mask, num_warmup, num_samples, num_chains,
             'theta': np.remainder(flat('theta') + np.pi, np.pi),
             'r_eff': flat('r_eff'), 'n': flat('n'),
             'xc': flat('xc'), 'yc': flat('yc')}
-
-
-def make_log_prob(image, err, psf, mask, priors):
-    ny, nx = image.shape
-    yy, xx = torch.meshgrid(torch.arange(ny), torch.arange(nx), indexing='ij')
-    xx = xx.to(torch.float32)
-    yy = yy.to(torch.float32)
-    t_psf = torch.tensor(psf, dtype=torch.float32)
-    t_img = torch.tensor(image, dtype=torch.float32)
-    t_err = torch.tensor(err, dtype=torch.float32)
-    t_mask = torch.tensor(mask)
-    n_data = int(t_mask.sum())
-
-    def model_image(theta):
-        log_I_e, R_e, n, x0, y0, q, th, sky = [torch.tensor(float(v)) for v in theta]
-        model = galaxy.full_sersic_model_torch(
-            xx, yy, t_psf, I_e=10.0**log_I_e, R_e=R_e, n=n, x0=x0, y0=y0, q=q, theta=th)
-        return model + sky
-
-    def log_prob(theta):
-        for value, (lo, hi) in zip(theta, priors):
-            if not (lo <= value <= hi):
-                return -np.inf
-        with torch.no_grad():
-            model = model_image(theta)
-            if not torch.isfinite(model).all():
-                return -np.inf
-            chi2 = float(torch.sum((((t_img - model)/t_err)[t_mask])**2))
-        return -0.5*chi2
-
-    return log_prob, model_image, n_data
-
-
-def estimate_error_inflation(image, err, psf, mask, priors, peak,
-                             q_mom, th_mom, cx, cy):
-    '''
-    sqrt(chi2/dof) at the best fit, the factor the ERR map must be scaled by so
-    that chi2/dof = 1.
-
-    A single Sersic cannot describe a real galaxy at ~1000 sigma per pixel, so
-    the formal ERR-based errors are meaninglessly small: the uncertainty on q is
-    dominated by model inadequacy, not photon noise. Both backends must apply
-    this, otherwise they are not sampling the same likelihood and cannot be
-    compared. Returns 1.0 if the fit is already acceptable.
-    '''
-    from scipy.optimize import minimize
-
-    log_prob, _, n_data = make_log_prob(image, err, psf, mask, priors)
-    p_start = np.array([np.log10(max(peak, 1e-3)/3), 6.0, 1.0, cx, cy,
-                        np.clip(q_mom, 0.15, 0.98), th_mom, 0.0])
-    nll = lambda t: -log_prob(t)
-    best = minimize(nll, p_start, method='Nelder-Mead',
-                    options={'maxiter': 40000, 'maxfev': 40000,
-                             'xatol': 1e-5, 'fatol': 1e-5})
-    best = minimize(nll, best.x, method='Nelder-Mead',
-                    options={'maxiter': 40000, 'maxfev': 40000,
-                             'xatol': 1e-5, 'fatol': 1e-5})
-    chi2_dof = 2*best.fun/(n_data - len(PARAM_NAMES))
-    if chi2_dof <= 1:
-        LOG.info(f'chi2/dof = {chi2_dof:.3f}, no error inflation needed')
-        return 1.0
-    inflate = float(np.sqrt(chi2_dof))
-    LOG.info(f'chi2/dof = {chi2_dof:.3f} -> inflating ERR by '
-             f'sqrt(chi2/dof) = {inflate:.2f}')
-    return inflate
 
 
 def main():
