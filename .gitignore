@@ -29,3 +29,14 @@ Archive_6/
 # Scratch output from the figure and map scripts.
 maps/
 *.log
+
+# Superseded notebooks, kept on disk but out of the repo.
+#   run_dingo_sample.ipynb  sampled inc_v free (no FIX_INCLINATION anywhere in
+#                           it) and carried 13 MB of outputs, which contradicts
+#                           the CODE-only rule above. kinematics.ipynb replaces it.
+#   1-fit-kinematics.ipynb  the original Adam-only fit: no MCMC, no error bars,
+#                           no rotation-vs-null test, so it could not report a
+#                           non-detection.
+run_dingo_sample.ipynb
+1-fit-kinematics.ipynb
+drizzle_utils.py

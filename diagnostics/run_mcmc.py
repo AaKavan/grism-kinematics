@@ -204,7 +204,7 @@ def kpc_per_pixel(z, arcsec_per_pixel=0.063):
 def arctangent_dynamical_mass(r_kpc, V_rot, R_v_kpc):
     '''
     M(<r) = V(r)^2 r / G for the arctangent rotation curve, in solar masses.
-    Vectorised over chain samples. Same form as cell 24 of 1-fit-kinematics.ipynb.
+    Vectorised over chain samples. Same form as the results cell of kinematics.ipynb.
     '''
     G = 4.302e-6  # kpc (km/s)^2 / Msun
     V = (2.0/np.pi)*V_rot*np.arctan(r_kpc/R_v_kpc)
