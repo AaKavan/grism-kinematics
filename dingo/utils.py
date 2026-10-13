@@ -649,3 +649,44 @@ def kpc_pix_scale(z, filt, oversample=3):
     pix_per_kpc = 1.0 / kpc_per_pix
 
     return kpc_per_pix, pix_per_kpc, pixscale_arcsec
+
+
+def kms_per_pixel(lam0, filt, module):
+    """Velocity that displaces a grism trace by one detector pixel at `lam0`.
+
+    The resolution floor of the whole method. A fitted amplitude below this is
+    sub-pixel: ID16887 returns V*sin(i) = 8.4 km/s where one pixel is 68.2, and
+    the null test still calls it 5.97 sigma, because a likelihood ratio measures
+    whether a residual is non-zero, not whether it is resolved.
+
+    Taken from the forward model rather than a nominal dispersion, so it carries
+    the actual trace and the actual filter. `module` is required and never
+    guessed: it selects the calibration tables, and the wrong one rectifies the
+    wrong pixels and returns a plausible number (see catalogs._require_module).
+
+    Returns the COARSER of the two directions, so a source must be resolved in
+    both rather than only the finer one. R and C share a dispersion and differ
+    by ~0.07% here (66.79 vs 66.85 km/s at 4.398 um), so the choice is a
+    statement of intent rather than a numerical one.
+
+    Note vsys_separability.py takes the other branch for its own scale, and
+    correctly: it propagates a registration error into v_sys, where the largest
+    displacement is what matters. This is a detection floor, so it takes the
+    worst resolution rather than the best.
+    """
+    import torch
+    c_kms = 299792.458
+    dv = 100.0
+    zero = torch.zeros(1)
+    shifts = []
+    for pupil, axis in (('R', 0), ('C', 1)):
+        _, sp, dp = grism.load_nircam_wfss_model(pupil, module, filt)
+        fwd = get_grism_model_torch(sp, dp, pupil, 1024, 1024,
+                                    direction='forward', device=None)
+        p0 = fwd(zero, zero, torch.tensor([float(lam0)]))
+        p1 = fwd(zero, zero, torch.tensor([float(lam0)*(1 + dv/c_kms)]))
+        shifts.append(abs(float(p1[axis] - p0[axis])))
+    moved = min(shifts)
+    if moved <= 0:
+        raise ValueError(f'the forward model moved 0 px for {dv} km/s at {lam0} um')
+    return dv/moved
