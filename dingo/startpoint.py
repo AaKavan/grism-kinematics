@@ -40,6 +40,12 @@ LOG = logging.getLogger(__name__)
 __all__ = ['amplitude_name', 'scan_grid', 'distinct_minima', 'find_start']
 
 
+def _free(device=None):
+    '''Return freed GPU blocks to the driver. Harmless with nothing allocated.'''
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def amplitude_name(config):
     '''"V_rot" or "V_sini" -- whichever this config defines. Never both.'''
     vel = config.get('velocity', {})
@@ -147,6 +153,11 @@ def find_start(config_path, device=None, amp_max=1400.0, amp_step=25.0,
     loss = scan_grid(probe, amp_key, amplitudes, thetas)
     seeds = distinct_minima(loss, amplitudes, thetas, n_keep=n_keep, amp_tol=amp_step/2)
 
+    # The probe's cutouts and calibration stay resident while every refinement
+    # below allocates its own, so release it now rather than hold two at once.
+    del probe
+    _free(device)
+
     trials = []
     for _, v0, th0 in seeds:
         f = build(config_path)
@@ -157,6 +168,13 @@ def find_start(config_path, device=None, amp_max=1400.0, amp_step=25.0,
         f.fit_all()
         params, _, _ = f.get_params()
         trials.append({'start': (v0, th0), 'loss': float(f.losses[-1]), 'params': params})
+        # Each seed builds a whole new fitter. Dropping the reference is not
+        # enough: torch's caching allocator keeps the freed blocks, so scanning
+        # several sources in one process exhausts the GPU -- on WSL2 that
+        # surfaces as `dxgkio_create_allocation: Ioctl failed: -75` and the
+        # process is killed mid-source with no Python traceback.
+        del f
+        _free(device)
 
     if not trials:
         raise RuntimeError('the grid found no local minimum -- check the config loads')
