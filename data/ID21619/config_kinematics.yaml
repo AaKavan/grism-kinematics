@@ -54,6 +54,23 @@ fitting:
     override:
       image.R.dx, image.R.dy:
         lr: 0.5
+      # The amplitude needs an lr matched to its SCALE, not the default.
+      # Adam moves a parameter by ~lr per step whatever the gradient is, so at
+      # the default 0.05 -- fine for theta_v (range 2pi) or R_v (~1) -- this one
+      # travels ~98 km/s over the StepLR schedule, against a comb tooth spacing
+      # of 75-95 and a plausible range of 0-2500. The fit then cannot leave the
+      # tooth it started in and reports the starting guess back as a result.
+      #
+      # Measured on ID15665, five starts spanning 50-1100 km/s:
+      #     lr 0.05 -> 134.8 203.2 361.7 689.8 1068.1   (spread 933 km/s)
+      #     lr 5    -> 275.5 274.0 275.6 274.1  338.0   (spread  64 km/s)
+      # against a published V_sini of 271.5. The rule of thumb is lr ~ range/500.
+      #
+      # This is what the grad student's `velocity.v_rot: {lr: 1}` was for. It was
+      # lowercase, matched no parameter, and was a warning rather than an error;
+      # check_unused_overrides now raises on it.
+      velocity.V_rot:
+        lr: 5
       # The C-grism offsets are FIXED. Shifting both grisms by the same amount and
       # moving (x0_v, y0_v) by the same amount translates the rectified images
       # together and leaves R-C unchanged, so (dx_R, dx_C, x0_v) and
@@ -112,6 +129,8 @@ fitting:
         fit: false
       velocity.theta_v:
         fit: false
+      velocity.V_rot:
+        lr: 0.3
 
 # ----------------------------------------------------------------------------
 # MCMC posterior sampling (read only by fit_MCMC)

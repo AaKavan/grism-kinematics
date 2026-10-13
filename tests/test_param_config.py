@@ -392,3 +392,32 @@ def test_find_spec1d_dir_accepts_the_sibling_layout(tmp_path):
 def test_find_spec1d_dir_returns_none_when_there_is_nothing(tmp_path):
     from dingo import catalogs
     assert catalogs.find_spec1d_dir(str(tmp_path)) is None
+
+
+@pytest.mark.parametrize('cfg_path', CONFIGS, ids=lambda p: os.path.basename(os.path.dirname(p)))
+def test_the_rotation_amplitude_gets_a_learning_rate_for_its_scale(cfg_path):
+    '''The amplitude must override the default lr, or the fit cannot move it.
+
+    Adam steps a parameter by ~lr regardless of the gradient. The default 0.05
+    suits theta_v (range 2pi) and R_v (~1); for an amplitude of 0-2500 km/s it
+    allows ~98 km/s of travel over the StepLR schedule, which is about one comb
+    tooth (spacing 75-95). The optimiser then stays in whichever tooth it was
+    seeded in and returns the starting guess as the answer -- measured on
+    ID15665, where five starts spanning 50-1100 km/s gave five answers spanning
+    933 km/s at lr 0.05, and agreed to 64 km/s on the published value at lr 5.
+
+    Asserts a floor rather than an exact value so a config may tune it, and
+    names whichever amplitude that config defines: an override naming the other
+    one matches no parameter, which check_unused_overrides raises on.
+    '''
+    cfg = yaml.safe_load(open(cfg_path))
+    amps = [k for k in ('V_rot', 'V_sini') if k in (cfg.get('velocity') or {})]
+    assert len(amps) == 1, f'expected exactly one amplitude, found {amps}'
+    key = f'velocity.{amps[0]}'
+
+    stage = cfg['fitting'][0]
+    lr = ((stage.get('override') or {}).get(key) or {}).get('lr')
+    assert lr is not None, (
+        f'stage 1 does not override {key}, so it inherits the default '
+        f'lr {stage["default"]["lr"]} and can barely move')
+    assert lr >= 1.0, f'{key} lr {lr} is too small to cross a comb tooth'
