@@ -28,10 +28,14 @@ what makes the sign table unnecessary rather than replacing one guess with
 another. Stage A needs one forward pass per node (~40-100 ms), so the number of
 staged fits stays small and fixed instead of being chosen per source by eye.
 '''
+import logging
+
 import numpy as np
 import torch
 
 from .fitting import KinematicsFitter, AMPLITUDE_KEYS
+
+LOG = logging.getLogger(__name__)
 
 __all__ = ['amplitude_name', 'scan_grid', 'distinct_minima', 'find_start']
 
@@ -116,9 +120,15 @@ def distinct_minima(loss, amplitudes, thetas, n_keep=6, amp_tol=12.0, theta_tol=
     return keep
 
 
-def find_start(config_path, device=None, amp_max=625.0, amp_step=25.0,
+def find_start(config_path, device=None, amp_max=1400.0, amp_step=25.0,
                n_theta=16, n_keep=6, make_fitter=None):
     '''Scan, refine, and return the best starting point for this source.
+
+    `amp_max` is 1400, not the 625 this first shipped with: ID3700's best fit
+    sits near 516 and the comb continues past it, so a ceiling anywhere near the
+    answer hides the real minimum and the scan reports the highest tooth it was
+    allowed to see. The grid costs one forward pass per node, so raising it is
+    cheap; getting it wrong is not. The MCMC prior allows 0-2500.
 
     Returns (params, loss, trials): the winning parameter dict, its final loss,
     and every (start, loss, params) tried, so a caller can see whether the teeth
@@ -151,4 +161,14 @@ def find_start(config_path, device=None, amp_max=625.0, amp_step=25.0,
     if not trials:
         raise RuntimeError('the grid found no local minimum -- check the config loads')
     best = min(trials, key=lambda t: t['loss'])
+
+    # A winner against the ceiling means the scan stopped before the loss did, so
+    # the "best tooth" is just the last one it was allowed to look at. ID3700
+    # returned 631 under the old amp_max of 625 and the true minimum was 516 --
+    # in the other direction, which is why this warns rather than assuming high.
+    if best['params'][amp_key] > amp_max - 2*amp_step:
+        LOG.warning(
+            f'the winning {amp_key} ({best["params"][amp_key]:.1f}) is within two '
+            f'grid steps of amp_max ({amp_max:.0f}). The scan may have been cut off '
+            f'before the loss turned over; re-run with a higher amp_max to check.')
     return best['params'], best['loss'], trials
