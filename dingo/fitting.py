@@ -744,6 +744,13 @@ class BaseFitter(ABC):
         all_cfg = {}
         for cfg_list in self.param_config_lists.values():
             all_cfg.update(cfg_list[self.current_stage])
+        # Stages share tensors. The last stage may have disabled a gradient
+        # that this stage needs, including when fit_all() is called again.
+        # Apply the active stage's flags on EVERY entry, not only when values
+        # are handed from one stage to the next.
+        for cfg in all_cfg.values():
+            if isinstance(cfg.tensor, torch.Tensor):
+                cfg.tensor.requires_grad_(cfg.fit)
         param_groups, clamp_list = _extract_tensors(all_cfg, device=self.device)
 
         # Initialise the diagnostics BEFORE the early return below, or a stage with
@@ -904,18 +911,7 @@ class BaseFitter(ABC):
                             continue
                         if key in prev_cfg:
                             cfg.tensor = prev_cfg[key].tensor
-                            # Assigning the tensor bypasses FitParamConfig.fit's
-                            # setter, which is what keeps tensor.requires_grad in
-                            # step with cfg.fit. Without this re-assert, a
-                            # parameter frozen in stage i and free in stage i+1
-                            # inherits requires_grad=False, is admitted to the
-                            # optimiser by _extract_tensors (which tests cfg.fit),
-                            # gets p.grad = None, and is silently never optimised.
-                            # The mirror case leaves a frozen parameter with
-                            # requires_grad=True, so it accumulates a gradient that
-                            # optimizer.zero_grad() never clears -- harmless for the
-                            # fit, but garbage to anything reading .grad.
-                            cfg.tensor.requires_grad = cfg.fit
+                            # fit_gradient applies the active stage's fit flags.
 
             # assign the up-to-date cfgs for this stage
             self._assign_cfgs_for_stage(idx)
@@ -2916,6 +2912,13 @@ class KinematicsFitter(BaseFitter):
         '''
         Likelihood-ratio comparison of the rotating model at the CURRENT
         parameters against a no-rotation model, on the same frozen noise model.
+
+        This is an exploratory score comparison. At zero amplitude the angle,
+        centre and turnover radius are unidentified, so the regular Wilks
+        chi-square calibration does not apply. p_wilks, sigma_equiv and dBIC
+        are legacy nominal diagnostics, not calibrated detection probabilities
+        or evidence. A negative dlnL also indicates that the current rotating
+        fit is not the global maximum of the nested alternative.
 
         The null model sets V_rot = 0 -- then vz = 0 everywhere, so R_v, x0_v,
         y0_v, theta_v and inc_v all drop out -- and re-optimises only the free

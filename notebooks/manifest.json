@@ -1,0 +1,24 @@
+{
+  "reorganized_on": "2026-10-23T20:12:53.757369-07:00",
+  "purpose": "Move existing notebooks out of the repository root; preserve every byte, saved output and run setting.",
+  "files": [
+    {
+      "original_path": "manual_start_kinematics.ipynb",
+      "current_path": "notebooks/legacy/manual_start_kinematics.ipynb",
+      "sha256": "04d8264592167fcc00e5badeea321f986a2086972482cdece997e7c75e7b21ca",
+      "bytes": 1114463
+    },
+    {
+      "original_path": "rotation_only.ipynb",
+      "current_path": "notebooks/legacy/rotation_only.ipynb",
+      "sha256": "27d30dfe7297080a8e2be0711b146802e150fad9d8956c950874aea682dcd01b",
+      "bytes": 5066861
+    },
+    {
+      "original_path": "real_rc_validation.ipynb",
+      "current_path": "notebooks/validation/real_rc_validation.ipynb",
+      "sha256": "0075b9fa11fe1ae1753e37ab39fb737e3e038cd0c4a22819b50639630ce3698f",
+      "bytes": 1270296
+    }
+  ]
+}

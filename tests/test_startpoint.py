@@ -87,3 +87,29 @@ def test_fixed_inc_path_is_idempotent():
 
     once = fixed_inc_path('r/ID16887_chain_checkpoint.npz')
     assert fixed_inc_path(once) == once
+
+
+@pytest.mark.data
+def test_scan_winner_restores_registration_and_its_reported_loss(fitter, monkeypatch):
+    """A new fitter must reproduce the winner before taking another step."""
+    import torch
+
+    def build(_):
+        f = fitter('ID3700')
+        for stage in f.config['fitting']:
+            stage['maxiter'] = 2
+        return f
+
+    # Select one seed cheaply; refinement and restoration use actual R/C data.
+    monkeypatch.setattr(startpoint, 'scan_grid',
+                        lambda *args: np.array([[3., 4.], [1., 2.]]))
+    _, loss, trials = startpoint.find_start(
+        'unused', amp_max=400., amp_step=200., n_theta=2, n_keep=1,
+        make_fitter=build)
+    state = trials[0]['full_params']
+    assert abs(state['image.R.dx']) + abs(state['image.R.dy']) > 0
+    restored = build('unused')
+    restored.set_params_dict(state)
+    restored._reset_state()
+    with torch.no_grad():
+        assert float(restored.loss()) == pytest.approx(loss, abs=1e-9)

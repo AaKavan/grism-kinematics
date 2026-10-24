@@ -1,26 +1,22 @@
-'''DINGO -- Dispersion-based INference for Galaxy Observations.
+'''DINGO -- joint inference of galaxy kinematics from R+C grism observations.
 
-Fits galaxy kinematics to JWST/NIRCam WFSS data taken in BOTH grism dispersion
-directions at once. The R and C grisms disperse along perpendicular detector
-axes, so the morphology-kinematics degeneracy along the dispersion axis -- the
-one a single-direction fit has to break with a light-profile prior -- is broken
-by the data instead.
+The working three-file model in ``dingo.three_file`` uses one arctangent
+velocity field to rectify coadded R and C emission-line images and compare
+them. Intrinsic dispersion is fixed to zero; no gas-light profile is imposed.
+Imaging can supply an inclination prior, and ``dingo.manual_start`` supports
+sampled or fixed inclination. ``dingo.workflow`` provides explicit per-source
+run handles for searching, sampling, review and export. Existing single-source
+notebooks are preserved under ``notebooks/legacy``; ``workflow_demo.ipynb`` in
+the repository root demonstrates the Python workflow interface.
 
-The statistic is unusual and worth stating plainly: DINGO does not forward-model
-a galaxy. It rectifies each observed grism back to the direct-image frame through
-the velocity field and asks the two reconstructions to agree
-(`KinematicsFitter.loss`). There is no model image and no Sersic prior, so every
-parameter it reports is a measurement rather than a restatement of a prior.
+Complementary dispersion directions help distinguish morphology and velocity,
+but do not guarantee identifiable or prior-independent parameters. Inspect
+residuals and chain diagnostics before interpreting conditional uncertainties.
 
-Module layout, in dependency order:
-
-    grism       NIRCam WFSS trace/dispersion calibration I/O (numpy)
-    utils       FFT convolution, and the differentiable grism trace closure
-    galaxy      Sersic and point-source surface-brightness models (torch)
-    kinematics  the physics: velocity field, Doppler mapping, rectification
-    fitting     config loading, staged Adam, emcee sampling, noise model
-    plot        matplotlib helpers
-    catalogs    catalogue lookup and config generation
+``dingo.rotation`` and the native-exposure modules retain earlier experiments
+with a fitted gas-emission map and instrumental forward model. Those modules,
+the original ``fitting.KinematicsFitter`` and ``dingo.run`` remain available
+for reproduction. The README and dated reports describe their validation limits.
 '''
 
 from importlib.metadata import PackageNotFoundError, version as _version

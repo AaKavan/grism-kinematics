@@ -1,0 +1,109 @@
+{
+  "archived_on": "2026-10-18",
+  "purpose": "Preserve historical notebooks byte for byte. See notebooks/README.md for current locations; the latest single-source notebooks are under notebooks/legacy/.",
+  "files": [
+    {
+      "original_path": "1-fit-kinematics.ipynb",
+      "archived_path": "notebooks/archive/1-fit-kinematics.ipynb",
+      "sha256": "364f4e65a74ecda3f089d8bb6ec734b1ad100384a1b1fbe22baadaac4442688c",
+      "bytes": 26115,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "fit-kinematics-mcmc.ipynb",
+      "archived_path": "notebooks/archive/fit-kinematics-mcmc.ipynb",
+      "sha256": "ecf3d6955c1a9c736e2b994e930a324df3003052aa1b4dc8cc4228388aca171f",
+      "bytes": 139229,
+      "originally_tracked": true
+    },
+    {
+      "original_path": "kinematics.ipynb",
+      "archived_path": "notebooks/archive/kinematics.ipynb",
+      "sha256": "e0b5e772913f624b0102059cb48024acdeb4e1ef0fb0e727d25f50bbc758da98",
+      "bytes": 16700,
+      "originally_tracked": true
+    },
+    {
+      "original_path": "poster-plots.ipynb",
+      "archived_path": "notebooks/archive/poster-plots.ipynb",
+      "sha256": "4bc5333ed18a2a8464a4da5e0c96a5011437a8620683de94d7faa0815194f3be",
+      "bytes": 58301,
+      "originally_tracked": true
+    },
+    {
+      "original_path": "real_source_ID6170.ipynb",
+      "archived_path": "notebooks/archive/real_source_ID6170.ipynb",
+      "sha256": "109bf4df28eebcbb28093d1c07743f879a14e0d13b72be36b8839d7fe6fd73c0",
+      "bytes": 2431293,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "real_source_comparison.ipynb",
+      "archived_path": "notebooks/archive/real_source_comparison.ipynb",
+      "sha256": "db3ce5f9fe543eaf41d6423fb40f61475f1c7d5b510cea4b08f6e9073d802de0",
+      "bytes": 1513192,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "real_source_kinematics.ipynb",
+      "archived_path": "notebooks/archive/real_source_kinematics.ipynb",
+      "sha256": "0f6748b67c91489c9c662e015c1df86cff059e797b0ef0095ca957de96a79dad",
+      "bytes": 5762778,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "real_source_morphology_controls.ipynb",
+      "archived_path": "notebooks/archive/real_source_morphology_controls.ipynb",
+      "sha256": "4516c2e639889cfc445f0a7eb2ebb8e14b5f7044be8d56df8caab3a6eaaddd21",
+      "bytes": 960636,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "real_source_repaired.ipynb",
+      "archived_path": "notebooks/archive/real_source_repaired.ipynb",
+      "sha256": "ae6035b13275482e1735fcf7dc2b94415f2486478438e263b29d95a42d569838",
+      "bytes": 1729472,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "real_source_simple_dispersion.ipynb",
+      "archived_path": "notebooks/archive/real_source_simple_dispersion.ipynb",
+      "sha256": "8af23343ddcb53c6cd189ee353865b1d38d4b6719902815d4a2e711c403dc7f4",
+      "bytes": 583080,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "run_dingo_sample.ipynb",
+      "archived_path": "notebooks/archive/run_dingo_sample.ipynb",
+      "sha256": "f6d442dda73268645a641c6fe50334773335e256b47c350666a7462893a8c12a",
+      "bytes": 13472045,
+      "originally_tracked": false
+    },
+    {
+      "original_path": "rotation_only.ipynb",
+      "archived_path": "notebooks/archive/rotation_only_native_2026-10-19.ipynb",
+      "sha256": "615c3713c6dcb818cb00086725ffac9983bf0bff71380ea229a40eeebfb7f7dc",
+      "bytes": 2377805,
+      "archived_on": "2026-10-19",
+      "purpose": "Preserve the native-exposure notebook before the three-file workflow."
+    },
+    {
+      "original_path": "rotation_only.ipynb",
+      "archived_path": "notebooks/archive/rotation_only_before_simplification_20261021_182638.ipynb",
+      "sha256": "92bf53722ca263cc2d6396802ebb102851559a8d7f14537b4ea75df74241ef03",
+      "bytes": 7345299,
+      "originally_tracked": false,
+      "archived_on": "2026-10-21",
+      "purpose": "Preserve the complete three-file notebook, saved outputs, and source-specific selections before simplifying the main notebook. No fitted results were removed."
+    },
+    {
+      "original_path": "rotation_only.ipynb",
+      "archived_path": "notebooks/archive/rotation_only_before_projected_velocity_20261021_194511.ipynb",
+      "sha256": "ddb881427afb3286e6b6e6a61d6044e242fe2b0553a42128b5f98f8eecd6f74a",
+      "bytes": 5814558,
+      "originally_tracked": false,
+      "archived_on": "2026-10-21",
+      "purpose": "Preserve the completed ID15665 notebook and outputs before emphasizing projected velocity and deferring deprojected rotation and mass displays. Sampler and fitted results are unchanged."
+    }
+  ]
+}

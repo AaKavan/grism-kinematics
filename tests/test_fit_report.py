@@ -7,6 +7,7 @@ not isolate the statistic anyway.
 '''
 import textwrap
 
+import numpy as np
 import pytest
 import torch
 import yaml
@@ -136,3 +137,37 @@ def test_a_parameter_freed_in_a_later_stage_is_actually_optimised(tmp_path):
     assert stage2.tensor.requires_grad is True, 'requires_grad did not follow cfg.fit'
     assert float(stage2.tensor) == pytest.approx(3.0, abs=0.2), \
         'the parameter was freed in stage 2 but never moved'
+
+
+def test_restarting_fit_all_reenables_parameters_frozen_by_last_stage(tmp_path):
+    """A repeat must optimise p again even though the preceding polish froze it."""
+    class Pair(fitting.BaseFitter):
+        target = 3.0
+
+        def _setup_data(self):
+            cfgs = fitting.build_param_config_dict_with_alias(
+                {'p': 0.0, 'q': 0.0},
+                [st['default'] for st in self.config['fitting']],
+                [dict(st['override']) for st in self.config['fitting']],
+                prefix='toy', allowed_keys_extra={'toy': {'p', 'q'}})
+            self.param_config_lists = {'toy': cfgs}
+
+        def loss(self):
+            p = self._get_model_params('toy')
+            return (p['p'] - self.target)**2 + (p['q'] - 1)**2
+
+    config = yaml.safe_load(CONFIG.replace('MIN_', '-10.0').replace('MAX_', '10.0'))
+    import copy
+    polish = copy.deepcopy(config['fitting'][0])
+    polish['maxiter'] = 5
+    polish['override']['toy.p']['fit'] = False
+    config['fitting'].append(polish)
+    path = tmp_path / 'restart.yaml'
+    path.write_text(yaml.safe_dump(config))
+    f = Pair(str(path), device='cpu')
+    f.fit_all()
+    assert float(f.toy_cfg['toy.p'].tensor.detach()) == pytest.approx(3.0, abs=0.02)
+    f.target = 6.0
+    f.fit_all()
+    assert float(f.toy_cfg['toy.p'].tensor.detach()) == pytest.approx(6.0, abs=0.02)
+    assert np.ptp(f._fit_history[0]['trace']['toy.p']) > 2.0

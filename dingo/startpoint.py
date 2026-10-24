@@ -136,10 +136,15 @@ def find_start(config_path, device=None, amp_max=1400.0, amp_step=25.0,
     allowed to see. The grid costs one forward pass per node, so raising it is
     cheap; getting it wrong is not. The MCMC prior allows 0-2500.
 
-    Returns (params, loss, trials): the winning parameter dict, its final loss,
+    Returns (params, loss, trials): the winning velocity dict, its final loss,
     and every (start, loss, params) tried, so a caller can see whether the teeth
     were close together -- which is the honest measure of how much the answer
     depended on the choice.
+
+    Each trial also includes `full_params`, a dotted-key snapshot including
+    the fitted R/C registration offsets. Restore that snapshot with
+    set_params_dict() when continuing the winning fit; velocity alone does
+    not reproduce its loss.
 
     `make_fitter(config_path)` lets a caller apply a fixed inclination (or any
     other per-run edit) to each fitter the same way; the default just builds one.
@@ -167,7 +172,18 @@ def find_start(config_path, device=None, amp_max=1400.0, amp_step=25.0,
             stage['velocity.theta_v'].tensor.data.fill_(th0)
         f.fit_all()
         params, _, _ = f.get_params()
-        trials.append({'start': (v0, th0), 'loss': float(f.losses[-1]), 'params': params})
+        full_params = {
+            name: float(cfg.tensor.detach().cpu())
+            for name, cfg in f._mcmc_stage_cfg().items()
+            if isinstance(cfg.tensor, torch.Tensor) and cfg.tensor.numel() == 1
+        }
+        # losses[-1] was evaluated BEFORE the last optimiser step and clamp.
+        # Score the actual returned parameters with a fresh rectification.
+        f._reset_state()
+        with torch.no_grad():
+            final_loss = float(f.loss())
+        trials.append({'start': (v0, th0), 'loss': final_loss,
+                       'params': params, 'full_params': full_params})
         # Each seed builds a whole new fitter. Dropping the reference is not
         # enough: torch's caching allocator keeps the freed blocks, so scanning
         # several sources in one process exhausts the GPU -- on WSL2 that

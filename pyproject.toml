@@ -28,10 +28,17 @@ dependencies = [
 # (fitting._import_emcee, plot._corner_fallback), so the gradient-fitting path
 # works without them. They are required for fit_MCMC and the corner plots.
 mcmc = ["emcee", "corner"]
+native-posterior = ["jax>=0.4.30", "numpyro>=0.15", "arviz-stats>=1.0"]
+real-notebook = ["jax>=0.4.30", "numpyro>=0.15", "arviz-stats>=1.0", "pysersic",
+                 "pandas", "ipywidgets", "ipykernel", "nbformat", "nbclient", "corner"]
+# Native R+C rotation notebook, including F150W inclination-prior fitting.
+rotation = ["jax>=0.4.30", "numpyro>=0.22", "arviz-stats>=1.0", "corner",
+            "pysersic", "pandas", "ipykernel", "nbformat", "nbclient"]
 test = ["pytest"]
 
 [tool.setuptools.packages.find]
-include = ["dingo"]
+include = ["dingo", "diagnostics"]
+namespaces = true
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"

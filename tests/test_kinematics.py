@@ -8,6 +8,24 @@ from dingo import kinematics as K
 T = torch.tensor
 
 
+def test_enclosed_mass_uses_speed_at_radius_not_asymptotic_speed():
+    from astropy import units as u
+    from astropy.constants import G
+    from dingo.utils import arctangent_dynamical_mass
+
+    # At the turnover radius atan(1) gives V_rot/2: the enclosed-mass
+    # estimator must be one quarter of the asymptotic-speed substitution.
+    radius = np.array([2.0, 5.0])
+    amplitude = np.array([200.0, 500.0])
+    expected = ((amplitude / 2 * u.km / u.s)**2 * (radius * u.kpc) / G).to_value(u.Msun)
+    np.testing.assert_allclose(arctangent_dynamical_mass(radius, amplitude, radius), expected)
+
+    # Large turnover radius means a rising rotation curve, not a large mass
+    # at every radius just because the asymptotic speed is large.
+    mass = arctangent_dynamical_mass(5.0, 500.0, np.array([0.01, 2.4, 20.0]))
+    assert np.all(np.diff(mass) < 0)
+
+
 def _grid(n=81):
     y, x = torch.meshgrid(torch.arange(float(n)), torch.arange(float(n)), indexing='ij')
     return x, y

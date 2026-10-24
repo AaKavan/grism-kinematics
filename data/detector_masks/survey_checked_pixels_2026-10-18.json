@@ -1,0 +1,166 @@
+{
+  "format": "native_detector_mask_v1",
+  "coordinate_origin": 0,
+  "evidence": [
+    {
+      "path": "/home/aakavan/kinematics/results/real_sources/ID6170/detector_audit_2026-10-18/audit.json",
+      "sha256": "215fed2aba4b094bea642d30687a066d4c415eefbb82d5e3aa7f3d133b686879"
+    },
+    {
+      "path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_A_542_877/audit.json",
+      "sha256": "aefb76848659fc3d6e6d862673c514183f8e8434b2e68a3c41c46e81552b4e49"
+    },
+    {
+      "path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_A_827_1242/audit.json",
+      "sha256": "dda3c40f13e5f6d8a5970dbaacf8ba5c5ec5593027a9a64a86d5ba63e2f361ae"
+    },
+    {
+      "path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_B_411_1480/audit.json",
+      "sha256": "5b6a989c0cc77db661aaf1dc69284b05dd81522a6803b56c5f113de68310d28e"
+    },
+    {
+      "path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_B_424_1475/audit.json",
+      "sha256": "f729b361b3d570e6b738733729c9b5175fb2a6df90eec26db63b9235069d1c46"
+    }
+  ],
+  "pixels": [
+    {
+      "module": "B",
+      "x": 1817,
+      "y": 875,
+      "exposure_basenames": [
+        "jw06434111001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00003_nrcblong_rate_lv1.5.fits"
+      ],
+      "reason": "Recurrent isolated negative rate at the same detector pixel in all 18 independently inspected R/C exposures, SCI/ERR -23 to -146, including exposures where ID6170 is elsewhere. Existing DQ=4 does not reject it under reject_bits=3. Mask only this documented coordinate in these files."
+    },
+    {
+      "module": "A",
+      "x": 542,
+      "y": 877,
+      "exposure_basenames": [
+        "jw06434111001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434111001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434111001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00003_nrcalong_rate_lv1.5.fits"
+      ],
+      "reason": "Repeated isolated negative detector feature in all 18 independently inspected R/C raw exposures, including those with the source elsewhere. Verified 5x5 SCI/ERR/DQ neighborhoods before any new source kinematic fit.",
+      "evidence_path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_A_542_877/audit.json",
+      "evidence_sha256": "aefb76848659fc3d6e6d862673c514183f8e8434b2e68a3c41c46e81552b4e49"
+    },
+    {
+      "module": "A",
+      "x": 827,
+      "y": 1242,
+      "exposure_basenames": [
+        "jw06434111001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434111001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434111001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434112001_05201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434131001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434121001_03201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434122001_05201_00003_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00001_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00002_nrcalong_rate_lv1.5.fits",
+        "jw06434132001_05201_00003_nrcalong_rate_lv1.5.fits"
+      ],
+      "reason": "Repeated isolated negative detector feature in all 18 independently inspected R/C raw exposures, including those with the source elsewhere. Verified 5x5 SCI/ERR/DQ neighborhoods before any new source kinematic fit.",
+      "evidence_path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_A_827_1242/audit.json",
+      "evidence_sha256": "dda3c40f13e5f6d8a5970dbaacf8ba5c5ec5593027a9a64a86d5ba63e2f361ae"
+    },
+    {
+      "module": "B",
+      "x": 411,
+      "y": 1480,
+      "exposure_basenames": [
+        "jw06434111001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00003_nrcblong_rate_lv1.5.fits"
+      ],
+      "reason": "Repeated isolated negative detector feature in all 18 independently inspected R/C raw exposures, including those with the source elsewhere. Verified 5x5 SCI/ERR/DQ neighborhoods before any new source kinematic fit.",
+      "evidence_path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_B_411_1480/audit.json",
+      "evidence_sha256": "5b6a989c0cc77db661aaf1dc69284b05dd81522a6803b56c5f113de68310d28e"
+    },
+    {
+      "module": "B",
+      "x": 424,
+      "y": 1475,
+      "exposure_basenames": [
+        "jw06434111001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434111001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434112001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434131001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434121001_03201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434122001_05201_00003_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00001_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00002_nrcblong_rate_lv1.5.fits",
+        "jw06434132001_05201_00003_nrcblong_rate_lv1.5.fits"
+      ],
+      "reason": "Repeated isolated negative detector feature in all 18 independently inspected R/C raw exposures, including those with the source elsewhere. Verified 5x5 SCI/ERR/DQ neighborhoods before any new source kinematic fit.",
+      "evidence_path": "/home/aakavan/kinematics/results/real_sources/comparison_2026-10-18/detector_B_424_1475/audit.json",
+      "evidence_sha256": "f729b361b3d570e6b738733729c9b5175fb2a6df90eec26db63b9235069d1c46"
+    }
+  ]
+}

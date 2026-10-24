@@ -28,6 +28,23 @@ LOG.addHandler(logging.NullHandler())
 
 #%% utility functions in numpy
 
+def arctangent_dynamical_mass(r_kpc, V_rot, R_v_kpc):
+    """Rotation-only enclosed-mass estimator in solar masses.
+
+    V_rot is the asymptotic speed in km/s. Evaluate the rotation curve at
+    r_kpc before using V(r)^2 r/G. Inputs may be broadcastable posterior
+    arrays, preserving the covariance of amplitude and turnover radius.
+    This spherical-equivalent estimator includes neither pressure support
+    nor a disk-geometry correction.
+    """
+    from astropy.constants import G
+    import astropy.units as u
+
+    r = np.asarray(r_kpc)
+    velocity = (2 / np.pi) * np.asarray(V_rot) * np.arctan(r / np.asarray(R_v_kpc))
+    grav = G.to_value(u.kpc * (u.km / u.s)**2 / u.Msun)
+    return velocity**2 * r / grav
+
 def create_gaussian_psf(fwhm, size=25, ratio=1.0, theta=0.0):
     """
     Create a 2D Gaussian PSF using Astropy.

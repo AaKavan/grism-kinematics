@@ -8,12 +8,11 @@ __pycache__/
 # ---------------------------------------------------------------------------
 # This repository holds CODE. Observations and fit products stay out of it.
 #
-# Both are reproducible from what IS tracked: the staged FITS come from the
-# SAPPHIRES EDR release, and every result is regenerable from a config plus
-# `python -m dingo.run <ID>`. The config is the artifact worth versioning -- it
-# is the thing that records what was fitted and why -- and dingo.catalogs
-# generates configs from the catalogue, so the provenance chain is complete
-# without committing a single byte of data.
+# Native observations, calibration inputs and saved results live outside Git.
+# Source configurations and workflow code are versioned; run reports record
+# the exact input/code checksums and settings used for each scientific result.
+# Existing notebooks live under notebooks/legacy and notebooks/validation.
+# The multi-source interface is planned; `dingo.run` is historical.
 # ---------------------------------------------------------------------------
 
 # Staged cutouts (R/C grism + direct image per source). Configs are KEPT.
@@ -36,13 +35,15 @@ Archive_6/
 maps/
 *.log
 
-# Superseded notebooks, kept on disk but out of the repo.
-#   run_dingo_sample.ipynb  sampled inc_v free (no FIX_INCLINATION anywhere in
-#                           it) and carried 13 MB of outputs, which contradicts
-#                           the CODE-only rule above. kinematics.ipynb replaces it.
-#   1-fit-kinematics.ipynb  the original Adam-only fit: no MCMC, no error bars,
-#                           no rotation-vs-null test, so it could not report a
-#                           non-detection.
+# Historical notebooks retain their original bytes, including large outputs.
+# Keep the three formerly tracked examples available for version control;
+# preserve the remaining experiments locally without adding their outputs.
+# The most recent notebooks under legacy/ and validation/ remain eligible for
+# version control, including their preserved review outputs.
+notebooks/archive/*.ipynb
+!notebooks/archive/fit-kinematics-mcmc.ipynb
+!notebooks/archive/kinematics.ipynb
+!notebooks/archive/poster-plots.ipynb
 run_dingo_sample.ipynb
 1-fit-kinematics.ipynb
 drizzle_utils.py
