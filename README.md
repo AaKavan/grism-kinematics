@@ -19,20 +19,47 @@ source/run output directories. The Gaussian inclination width is an explicit
 argument, `inclination_sigma_deg=5.0`, adjustable for each run.
 
 See the [Python workflow guide](docs/workflow.md) for the prepare, inspect, fit
-and save calls, including sequential runs for several sources. It reuses the
-existing scientific model. Start with the runnable
+and save calls, including several configurations of the same source. Each stage
+can be called separately with a named run handle and explicit arguments:
+
+```python
+run_a = wf.prepare_source(
+    15665,
+    data_dir=DATA_DIR,
+    working_dir=WORKING_DIR,
+    run_name="15665_imaging_s5_v400",
+    inclination_mode="imaging_prior",
+    inclination_sigma_deg=5.0,
+    start_velocity_kms=400.0,
+)
+```
+
+Use `wf.show_inputs(run_a)` and `wf.fit_morphology(run_a)` to inspect the inputs
+and fit the morphology. Call `wf.find_candidates(run_a)` and
+`wf.show_candidates(run_a)` to search and inspect starting solutions.
+Choose a candidate with `wf.prepare_start(run_a, candidate_id=...)`, then call
+`wf.fit_source(run_a, warmup=1000, draws=1000, walkers=64)` when ready to sample.
+Review with `wf.show_results(run_a)` and save with `wf.save_results(run_a)`.
+The guide supplies imports and paths for these calls. Start with the runnable
 [workflow demo notebook](workflow_demo.ipynb).
 
 ## Notebooks
 
-The [workflow demo](workflow_demo.ipynb) accepts a list of source IDs and an
-editable input directory. It starts from prepared observations without needing
-earlier fits. One PSF-convolved Sérsic morphology fit per source is saved under
+The [workflow demo](workflow_demo.ipynb) shows direct function calls for
+`run_a` and `run_b`: two named experiments for ID15665 with starting velocities
+of 400 and 450 km/s. Edit arguments where each function is called, and execute
+preparation, morphology, candidate search, start selection, sampling and review
+one cell at a time. Copy the calls with a new handle and `run_name` to keep
+another configuration or source alongside them.
+
+The demo starts from prepared observations without needing earlier fits.
+One PSF-convolved Sérsic morphology fit per source is saved under
 `<ID>/morph_fits/F150W/`, with posterior samples, plots, readable parameter
 summaries and `pysersic_<ID>_info.cat`; matching fits are reused across experiments.
-Each kinematic run makes its own candidate search, asks for a starting solution
-after visual inspection, then runs MCMC and saves its results. Per-source
-settings support manual starts and fixed or sampled inclination.
+Each kinematic run makes its own candidate search. Set its chosen `candidate_id`
+after visual inspection; sampling and saving are separate calls. Different
+run names retain independent kinematic outputs even when the source ID matches.
+Arguments on `prepare_source` support manual starts and fixed or sampled inclination.
 
 The default MCMC pilot uses 1,000 warmup steps and 1,000 retained steps per
 walker across 64 walkers. These settings let you inspect behavior; they do not
@@ -44,7 +71,7 @@ Their saved settings, outputs and execution state were preserved exactly.
 
 | Notebook | Purpose |
 |---|---|
-| [Workflow demo](workflow_demo.ipynb) | Reusable source list: shared morphology, candidate inspection, MCMC, plots and saving. |
+| [Workflow demo](workflow_demo.ipynb) | Separate function calls for named experiments: shared morphology, candidate inspection, MCMC, plots and saving. |
 | [Rotation-only workflow](notebooks/legacy/rotation_only.ipynb) | Existing single-source PySersic, candidate search, MCMC and results workflow. |
 | [Manual starting values](notebooks/legacy/manual_start_kinematics.ipynb) | Existing experiments with user-chosen starting velocity and sampled or fixed inclination. |
 | [Exposure validation](notebooks/validation/real_rc_validation.ipynb) | Separate ID21636 experiment fitting some exposures and predicting withheld exposures; no MCMC mass errors. |
@@ -110,15 +137,17 @@ The Python interface writes each experiment into its own directory:
 ```text
 WORKING_DIR/
   15665/
-    15665_fixinc_i30_vstart400_run01/
+    morph_fits/F150W/
+      fit_001/
+        ...shared morphology posterior and plots...
+    15665_imaging_s5_v400/
       run_info.txt
       run.json
       results.npz
       ...plots...
       _checkpoints/
-    15665_priorinc_s5_vstart400_run01/
-  3700/
-    3700_priorinc_s5_vstart300_run01/
+    15665_imaging_s5_v450/
+      ...independent kinematic outputs...
 ```
 
 Each run retains its settings, provenance, completion status and diagnostics

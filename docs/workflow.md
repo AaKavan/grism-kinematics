@@ -1,4 +1,4 @@
-# Python workflow for multiple sources
+# Python workflow: separate calls for each experiment
 
 `dingo.workflow` provides separate functions to prepare, search, fit, inspect
 and save an experiment. Each experiment has its own `Run` handle and directory;
@@ -6,22 +6,22 @@ there is no global current source. It uses the existing three-file,
 rotation-only R+C model. The scientific likelihood has not changed.
 
 Use the **grism** environment and open the
-[workflow demo notebook](../workflow_demo.ipynb). Set `DATA_DIR`,
-`WORKING_DIR` and `SOURCE_IDS`, then run its seven code cells in order.
-The notebook has no dependency on previous fits. A new source gets its own
-morphology fit and candidate search. It pauses for explicit candidate choices,
-then samples the chosen starts sequentially. You can supply the candidate IDs
-in `CANDIDATE_IDS` after inspecting the residuals.
+[workflow demo notebook](../workflow_demo.ipynb). Set `DATA_DIR` and
+`WORKING_DIR`, then run the stages you need one cell at a time. Every stage is
+an ordinary function call with its arguments visible. The notebook shows
+`run_a` and `run_b` for two configurations of ID15665, starting at 400 and
+450 km/s. Each has its own name, candidate choice, sampling and saved outputs.
+Copy those calls to add another experiment or source.
 
 The default pilot runs 1,000 warmup steps and 1,000 retained steps per walker
 across 64 walkers. These are inspection settings, not a claim of reportable
-uncertainties. `RUN_MCMC=False` disables sampling in the MCMC cell; it does not
-disable the preceding morphology/search stages. For read-only review, execute
-only Settings and the final saved-results cell.
+uncertainties. Sampling starts only when you execute `wf.fit_source(...)`.
+For saved-result review, use `wf.load_run(...)` and `wf.show_results(...)` as
+shown below; no fitting stages are needed.
 
-The [previous demo](notebook_backups/workflow_demo_before_shared_morphology_20261024.ipynb)
-is preserved byte for byte. The [older notebooks](../notebooks/README.md) still
-use their existing interfaces and save locations.
+The [previous demo](notebook_backups/workflow_demo_before_direct_calls_20261025.ipynb)
+is preserved. The [older notebooks](../notebooks/README.md) still use their
+existing interfaces and save locations.
 
 ## Inputs and settings
 
@@ -29,7 +29,7 @@ Prepared inputs use this layout:
 
 ```text
 DATA_DIR/
-  ID3700/
+  ID15665/
     image.fits
     R.fits
     C.fits
@@ -38,53 +38,53 @@ DATA_DIR/
     ...
 ```
 
-The configuration supplies source coordinates and grism metadata. Set
-`CONFIG_DIR` in the notebook if configurations are in a separate directory with
-the same `ID<id>/config_kinematics.yaml` structure. `prepare_source` also accepts
-an explicit `config_path` for an individual source.
+The configuration supplies source coordinates and grism metadata. Pass
+`config_path="/path/to/config_kinematics.yaml"` directly to `prepare_source`
+if a source's configuration is outside its prepared input directory.
 
 A new F150W morphology fit needs calibrated science/error imaging and a matching
 PSF. The `science`, `error`, `psf` and `bundle` arguments can specify these paths;
 `None` uses the local survey defaults. These inputs are separate from the
 three kinematic cutouts. Data and calibration files are not bundled in Git.
 
-The notebook's `SOURCE_OPTIONS` dictionary overrides `prepare_source` settings
-for individual IDs, for example:
-
-```python
-SOURCE_IDS = [3700, 6170, 15665]
-SOURCE_OPTIONS = {
-    6170: dict(inclination_sigma_deg=10.0),
-    15665: dict(inclination_mode="fixed", inclination_deg=30.0,
-                start_velocity_kms=400.0, run_number=2),
-}
-```
-
-These are example experimental choices, not recommended angles or velocities
-for those sources. The notebook stores run handles and products in dictionaries
-keyed by source ID, so changing the source list needs no source-specific code.
-Ordinary errors are displayed and collected in `errors`; later sources continue.
-A keyboard interrupt stops execution. No jobs are launched in the background.
-
 ## Prepare and inspect morphology
 
-The individual package calls are useful both inside and outside the notebook:
+Import the package and set the two directories once:
 
 ```python
 from pathlib import Path
 from dingo import workflow as wf
 
-source_id = 3700
-working_dir = Path("/home/aakavan/kinematics/field_kinematics/edr_kinematics/PaA/dingo_runs")
-run = wf.prepare_source(
-    source_id,
-    working_dir=working_dir,
-    data_dir=Path("/path/to/prepared/data"),
+DINGO_DIR = Path(wf.__file__).resolve().parents[1]
+DATA_DIR = DINGO_DIR / "data"
+WORKING_DIR = DINGO_DIR.parent / "field_kinematics/edr_kinematics/PaA/dingo_runs"
+```
+
+Create a named experiment. These angles and velocities are example experimental
+choices, not recommendations for the source:
+
+```python
+run_a = wf.prepare_source(
+    15665,
+    data_dir=DATA_DIR,
+    working_dir=WORKING_DIR,
+    run_name="15665_imaging_s5_v400",
+    inclination_mode="imaging_prior",
     inclination_sigma_deg=5.0,
+    start_velocity_kms=400.0,
 )
-wf.show_inputs(run)
-morphology = wf.fit_morphology(run, warmup=1000, draws=2000, display=True)
-print(morphology.path)
+wf.show_inputs(run_a)
+```
+
+Fit and inspect the morphology in a separate cell:
+
+```python
+morphology_a = wf.fit_morphology(
+    run_a,
+    warmup=1000,
+    draws=2000,
+    display=True,
+)
 ```
 
 `prepare_source` creates or reopens the kinematic experiment and checks its
@@ -108,12 +108,14 @@ WORKING_DIR/
           parameters.txt
           ...posterior samples, plots and checkpoints...
         fit_002/                 # An intentional later refit
-    15665_fixinc_i30_vstart400_run02/
+    15665_imaging_s5_v400/
       run_info.txt
       run.json
       results.npz
       ...plots...
       _checkpoints/
+    15665_imaging_s5_v450/
+      ...independent kinematic outputs...
 ```
 
 `parameters.txt` gives readable medians and 16th/84th percentiles, including the
@@ -126,8 +128,8 @@ Unchanged settings and inputs reuse a matching morphology fit automatically.
 Each kinematic run records the exact revision it uses; an existing run remains
 pinned to that revision even if another experiment later refits the morphology.
 To attach a new fit after a run already has an imaging prior, choose a new
-kinematic run number or explicitly overwrite that kinematic run first. In the
-notebook, set `REFIT_MORPHOLOGY=False` again after the intended refit.
+kinematic run name or number, or explicitly overwrite that kinematic run first.
+Use `refit=True` only on the call intended to create that new morphology fit.
 
 The default `imaging_prior` mode uses the morphology-derived Gaussian mean
 and the requested total width. The gas morphology and center are not forced
@@ -141,16 +143,29 @@ uses `fit_morphology` throughout and requires no historical imaging directories.
 ## Search, choose and fit
 
 ```python
-wf.find_candidates(run)
-wf.show_candidates(run)
+wf.find_candidates(run_a)
+wf.show_candidates(run_a)
+```
 
-chosen_id = int(input("Candidate ID selected after inspecting residuals: "))
-initial = wf.prepare_start(run, candidate_id=chosen_id)
-initial.figure()
+After inspecting the candidates, put your chosen ID directly in the next call:
 
-posterior = wf.fit_source(run, warmup=1000, draws=1000, walkers=64, seed=42)
-wf.show_results(run)
-wf.save_results(run)
+```python
+initial_a = wf.prepare_start(run_a, candidate_id=0)  # Replace 0 with your chosen ID.
+initial_a.figure()
+```
+
+Run sampling, review and saving as separate stages:
+
+```python
+posterior_a = wf.fit_source(run_a, warmup=1000, draws=1000, walkers=64, seed=42)
+```
+
+```python
+wf.show_results(run_a)
+```
+
+```python
+wf.save_results(run_a)
 ```
 
 `show_candidates` displays all saved candidates and their matching residuals.
@@ -167,6 +182,58 @@ the number of walkers. PySersic and candidate searches show their own stage
 progress. Bars update when the worker reports completed work, so they can pause
 during compilation or expensive blocks. Detailed text logs and checkpoints
 remain in the corresponding run/morphology directory.
+
+## Another configuration of the same source
+
+Give the second experiment its own handle and run name. Its starting velocity
+is 450 km/s; the other settings remain explicit in the call:
+
+```python
+run_b = wf.prepare_source(
+    15665,
+    data_dir=DATA_DIR,
+    working_dir=WORKING_DIR,
+    run_name="15665_imaging_s5_v450",
+    inclination_mode="imaging_prior",
+    inclination_sigma_deg=5.0,
+    start_velocity_kms=450.0,
+)
+wf.show_inputs(run_b)
+```
+
+Call each stage for `run_b` when you are ready:
+
+```python
+morphology_b = wf.fit_morphology(run_b, warmup=1000, draws=2000, display=True)
+```
+
+```python
+wf.find_candidates(run_b)
+wf.show_candidates(run_b)
+```
+
+```python
+initial_b = wf.prepare_start(run_b, candidate_id=0)  # Choose from run_b's table.
+initial_b.figure()
+```
+
+```python
+posterior_b = wf.fit_source(run_b, warmup=1000, draws=1000, walkers=64, seed=42)
+```
+
+```python
+wf.show_results(run_b)
+```
+
+```python
+wf.save_results(run_b)
+```
+
+Matching morphology settings and inputs reuse the saved source morphology.
+The candidate search, selected start, posterior, logs and exported results are
+separate for each run. `run_a` continues to refer to the 400 km/s experiment
+after you create `run_b`. To try a different prior or another starting solution,
+copy the preparation call, change the arguments and use a new run name.
 
 ## Inclination choices and manual starts
 
@@ -187,9 +254,9 @@ replace the angle or prior you specified.
 Manual starts specify `start_velocity_kms` and, optionally,
 `start_inclination_deg`. These are initial values, not constraints around which
 the posterior must remain. The remaining coordinates come from a candidate
-search for the same source. The notebook makes this search inside the new run
-and asks which candidate should supply those coordinates. No external search
-is required.
+search for the same source. The notebook makes this search inside the new run;
+set `candidate_id` in `prepare_start` to choose the candidate supplying those
+coordinates. No external search is required.
 
 The broad search varies inclination even for a fixed-inclination experiment;
 its rows are exploratory starts. `prepare_start` previews the exact fixed-angle
@@ -200,7 +267,7 @@ external search without changing it. A sampled-inclination run requires a
 matching prior, including its width and imaging provenance. A manual-velocity
 run can omit `candidate_id` through the package API, in which case it records
 the highest-posterior finite parent candidate for the other coordinates. The
-demo instead asks for an explicit choice in every mode.
+demo instead uses an explicit `candidate_id` in every mode.
 
 ## Resume, restart and review
 
@@ -224,15 +291,10 @@ NPZ and plots alongside them; internal sampler products stay in `_checkpoints`.
 Reopening results requires no fitting:
 
 ```python
-saved = wf.load_run(working_dir / "15665/15665_fixinc_i30_vstart400_run02")
+saved = wf.load_run(WORKING_DIR / "15665/15665_imaging_s5_v400")
 posterior = wf.load_results(saved)
 wf.show_results(saved)
 ```
-
-`fit_batch({"source A": run_a, "source B": run_b}, **settings)` also supports
-sequential MCMC after starts have been selected. It returns a `BatchResult`
-per label and keeps ordinary failures separate. Review/export are explicit.
-The demo uses short loops so each source's outputs are visible immediately.
 
 ## Reading velocities and errors
 
@@ -250,8 +312,8 @@ locations when a run contains competing solutions. Completed sampling is not a
 convergence verdict. Fixed-inclination intervals exclude inclination uncertainty;
 intervals confined to one solution do not describe alternatives not explored.
 
-`wf.show_results(run, display=False)` returns figures and tables for separate
-notebook cells. `wf.save_results(run, radii_pc=observed_radii_pc)` additionally
+`wf.show_results(run_a, display=False)` returns figures and tables for separate
+notebook cells. `wf.save_results(run_a, radii_pc=observed_radii_pc)` additionally
 exports rotation and mass profiles on your explicit radius array. Default
 exports use illustrative radii, not established observed radial coverage.
 Reportable profiles need radii justified from the data; supplying an array
