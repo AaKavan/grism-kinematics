@@ -191,6 +191,93 @@ def test_unchanged_optional_imaging_is_included(completed_run, recorded_imaging)
         assert "imaging_full_pixel_samples_ellip" in bundle
 
 
+def _declare_single_imaging(result, imaging_root):
+    """Select one saved posterior and remove the unselected test fixture."""
+    import shutil
+    shutil.rmtree(imaging_root/"core_pixel_clean")
+    (imaging_root/"imaging_variants.json").write_text(json.dumps(
+        dict(source_id=result.source_id, variants=["full_pixel"])))
+    result.report["inclination_metadata"]["sources"] = [
+        item for item in result.report["inclination_metadata"]["sources"]
+        if item["variant"] == "full_pixel"]
+
+
+def test_declared_single_imaging_is_exported_with_inclination_and_samples(
+        completed_run, recorded_imaging):
+    result, root, _ = completed_run
+    _declare_single_imaging(result, recorded_imaging)
+    before = hashes(recorded_imaging)
+    imaging, arrays, metadata = exporting._imaging_products(result)
+    assert imaging.variants == (("full_pixel", 0.),)
+    assert metadata["status"] == "included"
+    assert all(check["status"] == "unchanged" for check in metadata["file_checks"])
+    assert "imaging_full_pixel_samples_ellip" in arrays
+    assert "imaging_full_pixel_fit_image" in arrays
+    np.testing.assert_array_equal(arrays["imaging_full_pixel_inclination_q0"], [0., .2])
+    summary = arrays["imaging_full_pixel_inclination_summary"]
+    assert summary.shape == (2, 4) and np.isfinite(summary).all()
+    assert not any("core_pixel_clean" in key for key in arrays)
+    output = result.export(root)
+    with np.load(output/"results.npz", allow_pickle=False) as saved:
+        np.testing.assert_array_equal(saved["imaging_full_pixel_samples_ellip"], .2*np.ones((2, 10)))
+        np.testing.assert_array_equal(saved["imaging_full_pixel_inclination_summary"], summary)
+        assert not any("core_pixel_clean" in key for key in saved.files)
+    assert hashes(recorded_imaging) == before
+
+
+def test_legacy_directory_with_only_one_recorded_variant_is_not_reinterpreted(
+        completed_run, recorded_imaging):
+    result, _, _ = completed_run
+    _declare_single_imaging(result, recorded_imaging)
+    (recorded_imaging/"imaging_variants.json").unlink()
+    imaging, arrays, metadata = exporting._imaging_products(result)
+    assert imaging is None and arrays == {}
+    assert metadata["status"] == "omitted: original imaging files changed or incomplete"
+    assert "declared selection" in metadata["detail"]
+    assert not (recorded_imaging/"imaging_variants.json").exists()
+
+
+def test_declared_selection_must_match_the_recorded_imaging_prior(
+        completed_run, recorded_imaging):
+    result, _, _ = completed_run
+    # Existing files alone do not authorize dropping a variant from the prior
+    # recorded when the kinematic fit ran.
+    (recorded_imaging/"imaging_variants.json").write_text(json.dumps(
+        dict(source_id=result.source_id, variants=["full_pixel"])))
+    imaging, arrays, metadata = exporting._imaging_products(result)
+    assert imaging is None and arrays == {}
+    assert "declared selection" in metadata["detail"]
+    assert len(metadata["recorded_sources"]) == 2
+
+
+@pytest.mark.parametrize("damage", ["missing", "changed", "wrong_source", "wrong_path"])
+def test_declared_single_export_keeps_integrity_and_missing_file_status(
+        completed_run, recorded_imaging, damage):
+    result, _, _ = completed_run
+    _declare_single_imaging(result, recorded_imaging)
+    sample_path = recorded_imaging/"full_pixel"/"samples.npz"
+    if damage == "missing":
+        import shutil
+        shutil.rmtree(recorded_imaging)
+    elif damage == "changed":
+        with sample_path.open("ab") as stream:
+            stream.write(b"changed posterior")
+    elif damage == "wrong_source":
+        (recorded_imaging/"imaging_variants.json").write_text(json.dumps(
+            dict(source_id=15665, variants=["full_pixel"])))
+    else:
+        result.report["inclination_metadata"]["sources"][0]["variant"] = "core_pixel_clean"
+    imaging, arrays, metadata = exporting._imaging_products(result)
+    assert imaging is None and arrays == {}
+    if damage == "missing":
+        assert metadata["status"] == "original imaging files unavailable"
+        assert metadata["file_checks"][0]["status"] == "unavailable"
+    else:
+        assert metadata["status"] == "omitted: original imaging files changed or incomplete"
+    if damage == "changed":
+        assert metadata["file_checks"][0]["status"] == "changed"
+
+
 def test_fixed_inclination_inherited_imaging_is_context_only(completed_run, recorded_imaging):
     result, _, _ = completed_run
     original = result.report["inclination_metadata"]

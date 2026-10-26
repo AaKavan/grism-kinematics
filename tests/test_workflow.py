@@ -477,6 +477,76 @@ def test_attached_imaging_sets_exact_total_five_degree_width_without_running(mak
     assert file_hashes(imaging) == before
 
 
+def test_shared_morphology_is_source_level_and_survives_kinematic_overwrite(make_run, monkeypatch):
+    from dingo import morphology
+    from dingo.rotation_imaging import ImagingResults
+
+    calls = []
+
+    def fit_shared(source_id, *, directory, **kwargs):
+        calls.append((source_id, directory, kwargs))
+        path = directory / "fit_001"
+        variant = path / "full_pixel"
+        if (variant / "samples.npz").exists():
+            return ImagingResults(path, source_id)
+        variant.mkdir(parents=True, exist_ok=True)
+        np.savez(variant / "samples.npz", q=np.full((4, 100), .7))
+        (path / "imaging_variants.json").write_text(json.dumps({
+            "source_id": source_id, "variants": ["full_pixel"],
+        }))
+        (variant / "imaging.json").write_text(json.dumps({
+            "source_id": source_id, "completed": True,
+            "diagnostics": {"convergence_gate_passed": True},
+            "orientation_parameterization_ok": True,
+            "samples_sha256": workflow.sha256(variant / "samples.npz"),
+            "input_sha256": {},
+        }))
+        return ImagingResults(path, source_id)
+
+    monkeypatch.setattr(morphology, "fit_morphology", fit_shared)
+    first = make_run(run_name="trial_one", inclination_mode="imaging_prior", inclination_deg=None)
+    result = workflow.fit_morphology(first, display=False, warmup=20, draws=30)
+    assert calls[0][1] == first.directory.parent / "morph_fits" / "F150W"
+    assert calls[0][2]["warmup"] == 20
+    assert calls[0][2]["draws"] == 30
+    original = file_hashes(result.path)
+
+    second = make_run(run_name="trial_two", inclination_mode="imaging_prior", inclination_deg=None,
+                      inclination_sigma_deg=7.)
+    workflow.fit_morphology(second, display=False, warmup=20, draws=30)
+    assert calls[1][1] == calls[0][1]
+    for run, expected_sigma in ((first, 5.), (second, 7.)):
+        record = json.loads((run.directory / "run.json").read_text())
+        assert record["imaging"]["prior"]["inclination_sigma_deg"] == expected_sigma
+        assert len(record["imaging"]["prior"]["sources"]) == 1
+
+    # Reopening a run pins its own morphology even if a newer shared fit exists.
+    monkeypatch.setattr(morphology, "fit_morphology",
+                        lambda *a, **k: pytest.fail("Already attached morphology must stay pinned"))
+    assert workflow.fit_morphology(first, display=False).path == result.path
+    with pytest.raises(ValueError, match="already records an imaging prior"):
+        workflow.fit_morphology(first, refit=True, display=False)
+
+    make_run(run_name="trial_one", inclination_mode="imaging_prior", inclination_deg=None, overwrite=True)
+    assert file_hashes(result.path) == original
+    assert second.directory.exists()
+
+
+def test_show_inputs_is_read_only_and_labels_cutout_pixels(make_run):
+    import matplotlib.pyplot as plt
+    run = make_run()
+    before = file_hashes(run.directory)
+    views = workflow.show_inputs(run, display=False)
+    figure = views["inputs"]
+    try:
+        assert len(figure.axes) == 3
+        assert all(axis.get_xlabel() == "Cutout x [pixel]" for axis in figure.axes)
+        assert [axis.get_title().split(": ")[1] for axis in figure.axes] == ["image.fits", "R.fits", "C.fits"]
+        assert file_hashes(run.directory) == before
+    finally:
+        plt.close(figure)
+
+
 def test_active_run_lock_blocks_overwrite(make_run):
     import fcntl
     run = make_run(start_velocity_kms=400.)

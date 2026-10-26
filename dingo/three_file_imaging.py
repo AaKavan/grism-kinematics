@@ -26,13 +26,16 @@ def review_imaging(source_id, *, run=True, override=False, run_name='pysersic_v1
                    results=None, device='cuda', warmup=1000, samples=2000,
                    fit_radius=2., corner_variant='full_pixel', show_core_corner=False,
                    bundle=None, config=None, imaging=None, science=None,
-                   error=None, psf=None, cutout_size=181, chunk=50, seed=735):
+                   error=None, psf=None, cutout_size=181, chunk=50, seed=735,
+                   variants=None):
     """Show the actual fitting image, fit/reuse PySersic, then show its posterior.
 
     ``run=False`` is read-only, including when ``override=True``. An accepted
     source-specific fit is reused unless override requests a new run. The input
     image is displayed before a fitting worker starts; retained samples are
     reviewed with PySersic's own corner plotting method after it returns.
+    Pass ``variants=('full_pixel',)`` for one Sérsic fit without an additional
+    core-masked alternative. Existing legacy fits retain both alternatives.
 
     Returns an ``ImagingResults`` object. This function does not start a grism
     search or automatically apply an inclination prior.
@@ -47,14 +50,16 @@ def review_imaging(source_id, *, run=True, override=False, run_name='pysersic_v1
         run_name=run_name, results=results, device=device, warmup=warmup,
         samples=samples, fit_radius=fit_radius, bundle=bundle, config=config,
         imaging=imaging, science=science, error=error, psf=psf,
-        cutout_size=cutout_size, chunk=chunk, seed=seed, preview_callback=preview)
+        cutout_size=cutout_size, chunk=chunk, seed=seed, preview_callback=preview,
+        variants=variants)
+    selected = getattr(result, 'variants', VARIANTS)
     _show(result.summary())
-    if any((result.path/name/'fit.npz').exists() for name, _ in VARIANTS):
+    if any((result.path/name/'fit.npz').exists() for name, _ in selected):
         _show_figure(result.figure())
-    variants = [corner_variant]
+    displayed_variants = [corner_variant]
     if show_core_corner:
-        variants += [name for name, _ in VARIANTS if name != corner_variant]
-    for name in variants:
+        displayed_variants += [name for name, _ in selected if name != corner_variant]
+    for name in displayed_variants:
         if not (result.path/name/'samples.npz').exists():
             print(f'{name}: no retained PySersic samples yet. Reports: {result.path}', flush=True)
             continue
@@ -79,10 +84,12 @@ def review_imaging(source_id, *, run=True, override=False, run_name='pysersic_v1
 
 def inclination_prior(result, *, scatter_deg=10., q0_bounds=(.05, .30),
                       total_sigma_deg=None):
-    """Approximate an accepted imaging mixture by a soft Gaussian gas prior.
+    """Approximate the selected imaging posterior(s) by a soft Gaussian gas prior.
 
-    The full and core-masked fits are alternative fits to the same image and
-    receive equal mixture weight. For each axis-ratio draw, assume an oblate
+    A single fit contributes its own posterior. When both full and core-masked
+    fits are selected, they are alternatives for the same image and receive
+    equal mixture weight; they are not independent observations. For each
+    axis-ratio draw, assume an oblate
     disk with intrinsic thickness uniform over ``q0_bounds``. Add independent
     stellar/gas inclination scatter in quadrature by default. If supplied,
     ``total_sigma_deg`` instead sets the exact total Gaussian width selected by
@@ -104,7 +111,8 @@ def inclination_prior(result, *, scatter_deg=10., q0_bounds=(.05, .30),
     result.require_ready()  # Checks source, convergence, and saved-file integrity.
     rng = np.random.default_rng(result.source_id)
     stellar, sources, rejected = [], [], []
-    for name, _ in VARIANTS:
+    selected = getattr(result, 'variants', VARIANTS)
+    for name, _ in selected:
         path = Path(result.path)/name/'samples.npz'
         with np.load(path, allow_pickle=False) as saved:
             q = np.asarray(saved['q'], dtype=float).ravel()
@@ -132,10 +140,11 @@ def inclination_prior(result, *, scatter_deg=10., q0_bounds=(.05, .30),
         q0_uniform_before_rejection=bounds.tolist(), additional_scatter_deg=float(scatter_deg),
         stellar_inclination_mean_deg=mean, stellar_inclination_std_deg=float(np.sqrt(variance)),
         invalid_q_q0_pair_fraction=rejected, sources=sources,
-        alternative_fits_not_independent_data=True, truncation_deg=[5., 85.])
+        alternative_fits_not_independent_data=len(selected) > 1,
+        truncation_deg=[5., 85.])
     if total_sigma_deg is not None:
         prior.update(kind='imaging_mean_user_width_gaussian',
             additional_scatter_deg=None, total_sigma_deg=sigma,
             width_policy='User-selected total Gaussian width; no quadrature addition. '
-                         'The center remains the imaging-derived mixture mean.')
+                         'The center remains the mean of the selected imaging posterior(s).')
     return prior

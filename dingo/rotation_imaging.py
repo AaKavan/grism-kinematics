@@ -11,14 +11,61 @@ import tarfile
 import numpy as np
 
 from .real_workflow import (DEFAULT_BUNDLE, DEFAULT_RESULTS, RealSource,
-                            read_json, run_command, sha256, write_json)
+                            read_json, sha256, write_json)
+from .progress import run_command
 
 
 VARIANTS = (('full_pixel', 0.), ('core_pixel_clean', .18))
+VARIANT_METADATA = 'imaging_variants.json'
+
+
+def _normalize_variants(names):
+    """Resolve explicit variant names without accepting typos or duplicates."""
+    if isinstance(names, str):
+        raise ValueError('variants must be a sequence of imaging variant names, not a string.')
+    try:
+        names = tuple(names)
+    except TypeError as exc:
+        raise ValueError('variants must be a nonempty sequence of imaging variant names.') from exc
+    known = dict(VARIANTS)
+    if (not names or any(not isinstance(name, str) or name not in known for name in names)
+            or len(set(names)) != len(names)):
+        raise ValueError('variants must contain unique names from full_pixel and core_pixel_clean.')
+    return tuple((name, known[name]) for name in names)
+
+
+def imaging_variants(path, source_id=None):
+    """Return the declared fits, retaining both requirements for legacy outputs.
+
+    A missing marker always means the historical full/core pair. A directory
+    containing only the full fit cannot silently become an accepted single fit.
+    """
+    marker = Path(path)/VARIANT_METADATA
+    if not marker.exists():
+        return VARIANTS
+    metadata = read_json(marker)
+    if source_id is not None and metadata.get('source_id') != int(source_id):
+        raise ValueError('Imaging variant metadata belongs to a different source.')
+    return _normalize_variants(metadata.get('variants'))
+
+
+def _check_variant_selection(path, source_id, requested):
+    """Reject reinterpretation of an existing fit under a different selection."""
+    path = Path(path)
+    declared = imaging_variants(path, source_id)
+    existing_fit = ((path/VARIANT_METADATA).exists()
+                    or (path/'input_provenance.json').exists()
+                    or (path/'cutout.npz').exists()
+                    or any((path/name).exists() for name, _ in VARIANTS))
+    if requested is not None and existing_fit and requested != declared:
+        raise ValueError('Imaging variant selection changed. Choose a new imaging directory '
+                         'or explicitly refit; existing full/core fits cannot be reinterpreted.')
+    return requested if requested is not None else declared
 
 
 def imaging_ready(path, source_id):
-    return all(_variant_ready(Path(path)/name, source_id) for name, _ in VARIANTS)
+    return all(_variant_ready(Path(path)/name, source_id)
+               for name, _ in imaging_variants(path, source_id))
 
 
 def _variant_ready(path, source_id):
@@ -163,15 +210,20 @@ def _recoverable_native_crash(exc, variant, source_id):
 def prepare_imaging(source_id, *, run=True, run_name='pysersic_v1', bundle=None, results=None,
                     config=None, imaging=None, device='cuda', warmup=1000, samples=2000,
                     cutout_size=181, fit_radius=2., chunk=50, seed=735,
-                    science=None, error=None, psf=None, override=False, preview_callback=None):
-    """Reuse an accepted prior or run full/core PySersic fits in a fresh directory.
+                    science=None, error=None, psf=None, override=False, preview_callback=None,
+                    variants=None):
+    """Reuse an accepted prior or run selected PySersic fits in a fresh directory.
 
     ``run=False`` only reads existing files. Explicit ``imaging`` selects an
     existing prepared directory or the location for a new fit. Otherwise named
     retries are under ID*/imaging_runs/run_name, leaving historical files intact.
-    Both variants are attempted even if one fails, then returned for inspection.
+    ``variants=('full_pixel',)`` requests one unmasked Sérsic fit. Without this
+    argument, existing declared selections are retained and new fits use the
+    historical full/core pair. Selected variants are attempted even if one
+    fails, then returned for inspection. Existing selections cannot change in
+    place without an explicit fresh run.
     With ``run=True, override=True``, clear the named imaging_runs output and
-    refit both variants, ignoring accepted historical fits or explicit imaging
+    refit the selected variants, ignoring accepted historical fits or explicit imaging
     paths. ``run=False`` remains read-only regardless of override.
     ``preview_callback(result)`` displays the prepared input before a worker
     starts, and is also called when opening cached imaging results.
@@ -188,20 +240,31 @@ def prepare_imaging(source_id, *, run=True, run_name='pysersic_v1', bundle=None,
     for name, value in dict(warmup=warmup, samples=samples, chunk=chunk).items():
         if not isinstance(value, (int, np.integer)) or value < 1:
             raise ValueError(f'{name} must be a positive integer.')
+    requested = None if variants is None else _normalize_variants(variants)
     fresh = run and override
     existing = (source.directory/'imaging_runs'/run_name if fresh else
                 Path(imaging).expanduser().resolve() if imaging else imaging_directory(source))
-    if not fresh and imaging_ready(existing, source.source_id):
+    if not fresh and imaging:
+        _check_variant_selection(existing, source.source_id, requested)
+    # Automatic historical discovery must not substitute a different model
+    # selection for an explicitly requested new single-fit run.
+    matching_existing = (requested is None
+                         or imaging_variants(existing, source.source_id) == requested)
+    if not fresh and matching_existing and imaging_ready(existing, source.source_id):
         print(f'Using accepted F150W PySersic fits for ID{source.source_id}: {existing}', flush=True)
         result = ImagingResults(existing, source.source_id)
         if preview_callback is not None:
             preview_callback(result)
         return result
     output = (existing if imaging and not fresh else source.directory/'imaging_runs'/run_name)
+    selected = (requested or imaging_variants(output, source.source_id)) if fresh else _check_variant_selection(
+        output, source.source_id, requested)
     if not run:
-        if not output.exists() and existing.exists():
+        if not output.exists() and existing.exists() and matching_existing:
             output = existing
-        result = ImagingResults(output, source.source_id)
+            selected = _check_variant_selection(output, source.source_id, requested)
+        result = ImagingResults(output, source.source_id,
+                                variants=tuple(name for name, _ in selected))
         if preview_callback is not None:
             preview_callback(result)
         return result
@@ -212,20 +275,32 @@ def prepare_imaging(source_id, *, run=True, run_name='pysersic_v1', bundle=None,
                              'a new IMAGING_RUN_NAME to retry without overwriting its inputs.')
     from .run_output import output_run
     with output_run(output, source, kind='imaging', override=bool(fresh)):
+        # Another process may have prepared this path since the first check.
+        selected = _check_variant_selection(output, source.source_id, selected)
+        # Establish the selected model before preparation can be interrupted.
+        # Otherwise a partial cutout could be mistaken for a legacy two-fit run
+        # when the next call resumes the same single-fit directory.
+        if (requested is not None or selected != VARIANTS) and not (output/VARIANT_METADATA).exists():
+            output.mkdir(parents=True, exist_ok=True)
+            write_json(output/VARIANT_METADATA, dict(source_id=source.source_id,
+                variants=[name for name, _ in selected]))
         prepare_inputs(source, output, cutout_size=cutout_size, fit_radius=fit_radius,
                        science=science, error=error, psf=psf)
         if preview_callback is not None:
             preview_callback(ImagingResults(output, source.source_id))
         return _fit_imaging(source, output, cutout_size=cutout_size, fit_radius=fit_radius,
-                            warmup=warmup, samples=samples, chunk=chunk, seed=seed, device=device)
+                            warmup=warmup, samples=samples, chunk=chunk, seed=seed,
+                            device=device, variants=selected)
 
 
-def _fit_imaging(source, output, *, cutout_size, fit_radius, warmup, samples, chunk, seed, device):
+def _fit_imaging(source, output, *, cutout_size, fit_radius, warmup, samples, chunk, seed,
+                 device, variants=VARIANTS):
     print(f'ID{source.source_id}: F150W PySersic, {cutout_size}×{cutout_size} pixels, '
-          f'{fit_radius:g} arcsec fitting radius. Four chains per full/core variant.\n'
+          f'{fit_radius:g} arcsec fitting radius. Four chains per selected variant '
+          f'({", ".join(name for name, _ in variants)}).\n'
           f'Imaging sampling: {warmup} warmup + {samples} retained draws per chain.\n{output}', flush=True)
     errors = {}
-    for name, core in VARIANTS:
+    for name, core in variants:
         variant = output/name
         args = ['-m', 'dingo.imaging_fit', '--inputs', str(output), '--output', str(variant),
                 '--mask-core', str(core), '--fit-radius', str(fit_radius), '--warmup', str(warmup),
@@ -245,15 +320,22 @@ def _fit_imaging(source, output, *, cutout_size, fit_radius, warmup, samples, ch
 
 
 class ImagingResults:
-    """Source-checked CPU display, including failed or interrupted fits."""
-    def __init__(self, path, source_id, *, errors=None):
+    """Source-checked CPU display, including failed or interrupted fits.
+
+    ``variants`` optionally states the expected names; it cannot reinterpret
+    existing output. ``self.variants`` contains ``(name, mask_radius_arcsec)``
+    pairs used consistently for acceptance, tables, and image panels.
+    """
+    def __init__(self, path, source_id, *, errors=None, variants=None):
         self.path, self.source_id = Path(path), int(source_id)
+        requested = None if variants is None else _normalize_variants(variants)
+        self.variants = _check_variant_selection(self.path, self.source_id, requested)
         self.errors = errors or {}
         self.reports = {}
         provenance = self.path/'input_provenance.json'
         if provenance.exists() and read_json(provenance).get('source_id') != self.source_id:
             raise ValueError('Imaging input directory belongs to a different source.')
-        for name, _ in VARIANTS:
+        for name, _ in self.variants:
             path = self.path/name/'imaging.json'
             if path.exists():
                 report = read_json(path)
@@ -277,7 +359,7 @@ class ImagingResults:
     def summary(self):
         import pandas as pd
         rows = []
-        for name, _ in VARIANTS:
+        for name, _ in self.variants:
             r = self.reports.get(name, {})
             d = r.get('diagnostics') or {}
             q = (r.get('quantiles_5_50_95') or {}).get('q', [None, None, None])
@@ -292,8 +374,8 @@ class ImagingResults:
         return pd.DataFrame(rows)
 
     def _report(self, variant):
-        if variant not in dict(VARIANTS):
-            raise ValueError(f'Unknown imaging variant: {variant}')
+        if variant not in dict(self.variants):
+            raise ValueError(f'Imaging variant is not selected for this fit: {variant}')
         return self.reports.get(variant, {})
 
     def _check_inputs(self, report=None):
@@ -442,10 +524,14 @@ class ImagingResults:
         norm = AsinhNorm(linear_width=max((high-low)/20, 1e-12),
                          vmin=low, vmax=max(high, low+1e-12))
         fig, ax = plt.subplots(figsize=(6.5, 6), layout='constrained')
+        single_fit = len(self.variants) == 1
+        cmap = plt.get_cmap('magma' if single_fit else 'gray').with_extremes(
+            bad='white' if single_fit else '.7')
+        excluded_color = 'White' if single_fit else 'Gray'
         image = ax.imshow(np.where(valid, data, np.nan), origin='lower', norm=norm,
-                          cmap=plt.get_cmap('gray').with_extremes(bad='.7'))
+                          cmap=cmap)
         ax.set(title=f'ID{self.source_id}: F150W image fitted by PySersic\n'
-                     f'{variant}; gray pixels are excluded',
+                     f'{variant}; {excluded_color.lower()} pixels are excluded',
                xlabel='Image x [pixel]', ylabel='Image y [pixel]')
         bar = fig.colorbar(image, ax=ax, shrink=.8, ticks=norm.inverse([.15, .5, .85]), format='%.3g')
         bar.set_label(metadata.get('unit') or 'Calibrated image units')
@@ -514,8 +600,9 @@ class ImagingResults:
     def figure(self):
         import matplotlib.pyplot as plt
         from matplotlib.colors import AsinhNorm
-        fig, axes = plt.subplots(2, 3, figsize=(13, 8), layout='constrained')
-        for row, (name, _) in enumerate(VARIANTS):
+        fig, axes = plt.subplots(len(self.variants), 3, squeeze=False,
+                                 figsize=(13, 4*len(self.variants)), layout='constrained')
+        for row, (name, _) in enumerate(self.variants):
             fit_path = self.path/name/'fit.npz'
             if not fit_path.exists():
                 for ax in axes[row]:

@@ -67,7 +67,7 @@ def _imaging_products(result):
     sources = record.get("sources", [])
     if not sources:
         return None, {}, {"status": "no imaging posterior recorded for this run"}
-    from .rotation_imaging import ImagingResults, VARIANTS
+    from .rotation_imaging import ImagingResults
     checks = []
 
     def omitted(status, detail):
@@ -92,11 +92,22 @@ def _imaging_products(result):
 
     try:
         roots = {Path(item["path"]).parent.parent.resolve() for item in sources}
-        if len(roots) != 1 or {item["variant"] for item in sources} != dict(VARIANTS).keys():
+        if len(roots) != 1:
             raise ValueError("Recorded imaging variants do not describe one source's imaging fit.")
+        root = roots.pop()
         for item in sources:
+            expected_path = root / item["variant"] / "samples.npz"
+            if Path(item["path"]).resolve() != expected_path.resolve():
+                raise ValueError("Recorded imaging sample path does not match its variant.")
             check_file(item["path"], item["samples_sha256"], kind="samples", variant=item["variant"])
-        imaging = ImagingResults(roots.pop(), result.source_id)
+        # A declared single fit has one posterior; unmarked historical output
+        # still requires both. Check recorded files first so missing originals
+        # retain their unavailable status even if their directory is gone.
+        imaging = ImagingResults(root, result.source_id)
+        selected = dict(imaging.variants)
+        if (len(sources) != len(selected)
+                or {item["variant"] for item in sources} != selected.keys()):
+            raise ValueError("Recorded imaging variants do not match the imaging directory's declared selection.")
         provenance_path = imaging.path / "input_provenance.json"
         provenance = json.loads(provenance_path.read_text()) if provenance_path.exists() else {}
         inputs = dict(provenance.get("input_sha256", {}))
@@ -106,7 +117,7 @@ def _imaging_products(result):
             check_file(path, expected, kind="input")
         imaging.require_ready()
         arrays = {}
-        for name, _ in VARIANTS:
+        for name, _ in imaging.variants:
             for key, value in imaging._physical_samples(name).items():
                 arrays[f"imaging_{name}_samples_{key}"] = value
             fit_path = imaging.path / name / "fit.npz"

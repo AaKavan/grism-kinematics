@@ -14,7 +14,7 @@ can supply an inclination prior; fixed-inclination experiments are also availabl
 
 The new [`dingo.workflow`](dingo/workflow.py) interface keeps a separate run
 handle for every source and experiment. It supports candidate searches, manual
-starting velocities, sampled or fixed inclination, progress/checkpoints and
+starting velocities, sampled or fixed inclination, live progress bars/checkpoints and
 source/run output directories. The Gaussian inclination width is an explicit
 argument, `inclination_sigma_deg=5.0`, adjustable for each run.
 
@@ -25,22 +25,26 @@ existing scientific model. Start with the runnable
 
 ## Notebooks
 
-The [workflow demo](workflow_demo.ipynb) uses separate run handles for each
-source. Its default ID3700 example reuses the current accepted imaging, makes
-a new candidate search, then runs an MCMC pilot with 1,000 warmup steps and
-1,000 retained steps per walker across 64 walkers. These settings are for trying the workflow,
-not establishing paper-quality uncertainties. The optional ID15665 manual-start
-example is disabled until enabled explicitly.
+The [workflow demo](workflow_demo.ipynb) accepts a list of source IDs and an
+editable input directory. It starts from prepared observations without needing
+earlier fits. One PSF-convolved Sérsic morphology fit per source is saved under
+`<ID>/morph_fits/F150W/`, with posterior samples, plots, readable parameter
+summaries and `pysersic_<ID>_info.cat`; matching fits are reused across experiments.
+Each kinematic run makes its own candidate search, asks for a starting solution
+after visual inspection, then runs MCMC and saves its results. Per-source
+settings support manual starts and fixed or sampled inclination.
 
-The first candidate search takes time; subsequent calls with the same run and
-settings reuse it. Set `reuse_imaging_3700=False` to run PySersic afresh.
+The default MCMC pilot uses 1,000 warmup steps and 1,000 retained steps per
+walker across 64 walkers. These settings let you inspect behavior; they do not
+establish paper-quality uncertainties. Live progress bars and checkpoints are
+automatic. No source-specific historical result directories are required.
 
 Earlier notebooks were moved out of the repository root on October 23, 2026.
 Their saved settings, outputs and execution state were preserved exactly.
 
 | Notebook | Purpose |
 |---|---|
-| [Workflow demo](workflow_demo.ipynb) | Current Python interface: imaging, candidate inspection, MCMC, plots, saving, and an optional second source. |
+| [Workflow demo](workflow_demo.ipynb) | Reusable source list: shared morphology, candidate inspection, MCMC, plots and saving. |
 | [Rotation-only workflow](notebooks/legacy/rotation_only.ipynb) | Existing single-source PySersic, candidate search, MCMC and results workflow. |
 | [Manual starting values](notebooks/legacy/manual_start_kinematics.ipynb) | Existing experiments with user-chosen starting velocity and sampled or fixed inclination. |
 | [Exposure validation](notebooks/validation/real_rc_validation.ipynb) | Separate ID21636 experiment fitting some exposures and predicting withheld exposures; no MCMC mass errors. |

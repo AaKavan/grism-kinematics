@@ -11,8 +11,7 @@ Example: search, inspect, then choose a candidate explicitly::
 
     run = wf.prepare_source(3700, working_dir="/path/to/results",
                             inclination_sigma_deg=5.0)
-    imaging = wf.fit_imaging(run)
-    wf.show_imaging(run)
+    imaging = wf.fit_morphology(run)
     candidates = wf.find_candidates(run)
     wf.show_candidates(run)
     chosen_id = int(input("Candidate ID selected after inspecting residuals: "))
@@ -57,7 +56,8 @@ import re
 import shutil
 import time
 
-from .real_workflow import REPO, read_json, run_command as _stream_command, sha256, source_number, write_json
+from .real_workflow import REPO, read_json, sha256, source_number, write_json
+from .progress import run_command as _stream_command
 
 
 SCHEMA = "dingo-workflow-v1"
@@ -65,7 +65,7 @@ _DETAILS_MARKER = "\n--- POSTERIOR DETAILS ---\n"
 
 
 def run_command(arguments, log_path, device="cuda"):
-    """Stream an existing worker inside a child-held checkpoint lock.
+    """Show a live progress bar for a worker inside a child-held checkpoint lock.
 
     The child lock remains held even if its notebook kernel disappears. This
     lets a later session distinguish a live orphan worker from a stale file
@@ -488,8 +488,9 @@ def use_imaging(run: Run, imaging_directory):
     In imaging_prior mode only the inclination prior is supplied to the grism
     fit. For fixed/gaussian_prior modes imaging provides context and does not
     change the specified angle/prior. Gas emission shape and center are not
-    forced to follow the stars. The existing full/core fits
-    are treated as alternative fits, not independent data; see inclination_prior.
+    forced to follow the stars. New morphology fits use one full-image Sérsic
+    model. Legacy full/core pairs remain readable as alternative fits to the
+    same image; see inclination_prior.
     """
     from .rotation_imaging import ImagingResults
     from .three_file_imaging import inclination_prior
@@ -504,6 +505,66 @@ def use_imaging(run: Run, imaging_directory):
                 raise ValueError("Attach imaging before searching/sampling; use a new run to change its prior.")
         record["imaging"] = settings
     return result
+
+
+def fit_morphology(run: Run, *, refit=False, display=True, warmup=1000,
+                   draws=2000, seed=735, fit_radius=2.0, cutout_size=181,
+                   chunk=50, science=None, error=None, psf=None, bundle=None):
+    """Fit or reuse this source's shared, single-Sérsic F150W posterior.
+
+    Unlike ``fit_imaging``, which retains the legacy pair of per-run fits, this
+    entry point stores imaging under ``<source>/morph_fits/F150W/fit_001``.
+    Different kinematic experiments can reuse it without resampling PySersic.
+    Each imaging fit has posterior samples, native plots, ``parameters.txt``
+    and a readable ``pysersic_<ID>_info.cat`` with settings and timestamps.
+
+    ``refit=True`` creates another immutable imaging version. An experiment
+    that already attached a prior stays pinned to its recorded imaging version;
+    to change that prior, first prepare a new kinematic run or explicitly
+    overwrite that kinematic run. Kinematic overwrite never deletes morphology.
+
+    Parameters are imaging sampler targets per chain, independent of the
+    kinematic sampler. Optional science/error/PSF paths select calibrated F150W
+    inputs; the three-file ``image.fits`` is not substituted for a calibrated
+    imaging mosaic. With ``display=True`` the fitting image appears before
+    sampling, followed by residuals, native corner and parameter tables.
+
+    Returns an ``ImagingResults`` object after attaching its inclination prior.
+    Incomplete or diagnostically unsuccessful imaging is saved for inspection
+    but cannot silently become the inclination prior of the grism fit.
+    """
+    from .morphology import fit_morphology as fit_shared_morphology
+
+    if not isinstance(refit, bool) or not isinstance(display, bool):
+        raise ValueError("refit and display must be booleans.")
+    record = _record(run)
+    _check_inputs(record)
+    attached = record.get("imaging")
+    if attached is not None:
+        if refit:
+            raise ValueError(
+                "This kinematic run already records an imaging prior. Choose a new "
+                "run_number/run_name or overwrite this kinematic run before refitting "
+                "morphology. Existing morphology versions will be preserved."
+            )
+        result = load_imaging(run)
+        result.require_ready()
+        print(f"ID{run.source_id}: using this run's recorded morphology: {result.path}", flush=True)
+        if display:
+            show_imaging(run)
+        return result
+
+    directory = run.directory.parent / "morph_fits" / "F150W"
+    result = fit_shared_morphology(
+        run.source_id, directory=directory,
+        config_path=record["configuration"]["config_path"],
+        device=record["configuration"]["device"], refit=refit, display=display,
+        warmup=warmup, draws=draws, seed=seed, fit_radius=fit_radius,
+        cutout_size=cutout_size, chunk=chunk,
+        science=science, error=error, psf=psf, bundle=bundle,
+    )
+    result.require_ready()
+    return use_imaging(run, result.path)
 
 
 def fit_imaging(run: Run, *, warmup=1000, draws=2000, seed=735,
@@ -560,6 +621,38 @@ def _display(items):
         display(item)
         if isinstance(item, plt.Figure):
             plt.close(item)
+
+
+def show_inputs(run: Run, *, display=True) -> dict:
+    """Show the three observed cutouts recorded for this source, without fitting.
+
+    Each panel uses its own asinh stretch so the input structures are visible.
+    Axes are zero-based cutout pixels; no model or residual is shown here.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import AsinhNorm
+    from astropy.io import fits
+
+    record = _record(run)
+    _check_inputs(record)
+    figure, axes = plt.subplots(1, 3, figsize=(13, 4), layout="constrained")
+    for axis, name in zip(axes, ("image", "R", "C")):
+        data = np.asarray(fits.getdata(record["inputs"][name]["path"]), dtype=float)
+        if data.ndim != 2 or not np.isfinite(data).any():
+            plt.close(figure)
+            raise ValueError(f"{name}.fits must contain a 2-D image with finite pixels.")
+        low, high = np.quantile(data[np.isfinite(data)], [.02, .995])
+        span = max(float(high-low), 1e-12)
+        norm = AsinhNorm(linear_width=span/20, vmin=low, vmax=low+span)
+        axis.imshow(data, origin="lower", norm=norm,
+                    cmap=plt.get_cmap("magma").with_extremes(bad="white"))
+        axis.set(title=f"ID{run.source_id}: {name}.fits",
+                 xlabel="Cutout x [pixel]", ylabel="Cutout y [pixel]")
+    views = {"inputs": figure}
+    if display:
+        _display(views)
+    return views
 
 
 def show_imaging(run: Run, *, variant="full_pixel", display=True) -> dict:
@@ -736,7 +829,7 @@ def prepare_start(run: Run, *, candidate_id=None):
 
 def fit_source(run: Run, *, candidate_id=None, warmup=1000, draws=8000,
                walkers=64, seed=42, notes=""):
-    """Run/resume one selected start with progress and persistent checkpoints.
+    """Run/resume one selected start with a progress bar and persistent checkpoints.
 
     ``draws`` is the total retained target PER WALKER, excluding warmup. Calling
     again with the same settings reuses completed output; increasing only draws
