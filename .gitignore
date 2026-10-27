@@ -41,9 +41,18 @@ maps/
 # The most recent notebooks under legacy/ and validation/ remain eligible for
 # version control, including their preserved review outputs.
 notebooks/archive/*.ipynb
-!notebooks/archive/fit-kinematics-mcmc.ipynb
-!notebooks/archive/kinematics.ipynb
-!notebooks/archive/poster-plots.ipynb
+# !notebooks/archive/fit-kinematics-mcmc.ipynb
+# !notebooks/archive/kinematics.ipynb
+# !notebooks/archive/poster-plots.ipynb
 run_dingo_sample.ipynb
 1-fit-kinematics.ipynb
 drizzle_utils.py
+
+
+# Notebooks, inputs and backups stay local
+*.ipynb
+data/
+psf/
+docs/notebook_backups/
+*.npz
+*.fits
