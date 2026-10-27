@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import yaml
 from astropy.io import fits
-from .fitting import KinematicsFitter
+from .masked_comparison import InputMaskedFitter
 from .candidate_search import PosteriorSearch, grid_seeds, diverse_indices, profile, polish_profile
 from .three_file_fit import (REPO, build_config, validate_inclination_metadata, velocity_definition,
     _json, _npz, _sha, _guard_identity, _choose_candidate, _search_config, parser as base_parser)
@@ -32,7 +32,7 @@ SCALAR_FIELDS = ('sigma_R', 'sigma_C', 'mcmc_corr_area', 'mcmc_var_base', 'mcmc_
                  'n_mcmc_pix', 'mcmc_temper', '_mcmc_lnvar_const', 'mcmc_flux_masked_out')
 
 
-class SharedComparisonFitter(KinematicsFitter):
+class SharedComparisonFitter(InputMaskedFitter):
     def _mcmc_prepare(self):
         if self.mcmc_mask is not None:
             return
@@ -43,6 +43,7 @@ class SharedComparisonFitter(KinematicsFitter):
             for name in SCALAR_FIELDS:
                 setattr(self, name, saved[name].item())
         self._mcmc_inv_var = None
+        self.validate_input_mask_support()
 
     def mcmc_fingerprint(self):
         return dict(super().mcmc_fingerprint(), shared_comparison_sha256=_sha(Path(self.config['shared_comparison'])))
@@ -50,13 +51,17 @@ class SharedComparisonFitter(KinematicsFitter):
 
 def save_comparison(config_path, path, device):
     """Reference fixed independently of the candidates; never rebuilt during sampling."""
-    f = KinematicsFitter(str(config_path), device=device)
+    f = InputMaskedFitter(str(config_path), device=device)
     from .startpoint import amplitude_name
     amplitude = amplitude_name(f.config)
     f.set_params_dict({f'velocity.{amplitude}': 0., 'image.R.dx': 0., 'image.R.dy': 0.})
     f.prepare_mcmc()
     values = {name: getattr(f, name).detach().cpu().numpy() for name in TENSOR_FIELDS}
     values.update({name: np.asarray(getattr(f, name)) for name in SCALAR_FIELDS})
+    if f.input_excluded:
+        values['input_comparison_excluded'] = f.input_comparison_excluded.cpu().numpy()
+        values.update({f'input_excluded_{pupil}': mask.cpu().numpy()
+                       for pupil, mask in f.input_excluded.items()})
     _npz(path, **values)
 
 
@@ -72,8 +77,11 @@ def records_and_pixels(f, searcher, points, scores, metadata, source_dir, path, 
         params['v_sys'] = 0.
         full.update({'velocity.v_sys': 0., 'image.C.dx': 0., 'image.C.dy': 0.})
         v = velocity_summary(params, metadata)
+        # A masked run's displayed residual sum must use its actual comparison
+        # pixels; otherwise the discarded contaminant still dominates the table.
+        residual = (r-c)[f.mcmc_mask.cpu().numpy()] if f.input_excluded else r-c
         rows.append(dict(candidate_id=cid, kind=kind, params=params, full_params=full,
-            loss=float(np.sum((r-c)**2)), log_posterior=float(actual),
+            loss=float(np.sum(residual**2)), log_posterior=float(actual),
             log_prior=float(f.log_prior(theta)), log_likelihood=float(actual-f.log_prior(theta)),
             velocity_summary=dict(V_sini_kms=v['v_sini'], V_inf_kms=v['v_inf'],
                 inclination_deg=v['inclination_deg'], R_v_pixels=params['R_v']),
@@ -214,6 +222,16 @@ def run(args):
         inclination_deg=args.inclination_deg, inclination_sigma_deg=args.inclination_sigma_deg,
         optimizer_steps=tuple(args.optimizer_steps), device=args.device, max_velocity=args.max_velocity,
         velocity_parameter=amplitude)
+    # Regions remain in original input-pixel coordinates. InputMaskedFitter
+    # builds a fixed comparison exclusion covering their remapped footprint.
+    masks = {}
+    for pupil in ('R', 'C'):
+        value = getattr(args, f'mask_{pupil.lower()}', None)
+        if value is not None:
+            path = Path(value).expanduser().resolve()
+            masks[pupil] = dict(path=str(path), sha256=_sha(path))
+    if masks:
+        config['input_masks'] = masks
     inclination_metadata = validate_inclination_metadata(
         __import__('json').loads(args.inclination_metadata_json) if args.inclination_metadata_json else None,
         args.source, args.inclination_deg, args.inclination_sigma_deg)
@@ -228,6 +246,7 @@ def run(args):
         profile_step=args.profile_step, profile_fine_step=args.profile_fine_step,
         profile_max=args.profile_max, profile_radius_pc=args.profile_radius_pc)
     inputs = {n: dict(path=str(source_dir/f'{n}.fits'), sha256=_sha(source_dir/f'{n}.fits')) for n in ('image','R','C')}
+    inputs.update({f'mask_{pupil}': info for pupil, info in masks.items()})
     from .grism import get_grism_cal_dir
     cal = Path(get_grism_cal_dir())
     identity = dict(source_id=args.source, config=_search_config(config), inputs=inputs,
@@ -236,6 +255,9 @@ def run(args):
         code={n: _sha(REPO/'dingo'/n) for n in ('candidate_search.py','three_file_search.py','three_file_fit.py',
                                              'fitting.py','kinematics.py','startpoint.py','grism.py','utils.py')},
         calibration={str(p.relative_to(cal)): _sha(p) for p in sorted(cal.rglob('*.dat'))})
+    if masks:
+        identity['code'].update({name: _sha(REPO/'dingo'/name)
+                                 for name in ('input_masks.py', 'masked_comparison.py')})
     _guard_identity(output/'search_identity.json', identity, description='broad search')
     config_path = output/'search_config.yaml'
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
@@ -389,6 +411,8 @@ def parser():
     p.add_argument('--profile-fine-step', type=float, default=1.)
     p.add_argument('--profile-max', type=float, default=1000.)
     p.add_argument('--profile-radius-pc', type=float)
+    p.add_argument('--mask-r', help='DS9 exclusion regions in original R input-pixel coordinates.')
+    p.add_argument('--mask-c', help='DS9 exclusion regions in original C input-pixel coordinates.')
     return p
 
 

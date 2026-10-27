@@ -181,7 +181,7 @@ def velocity_definition(parameter):
 def build_config(source_id, data_dir, config_path, output, *, warmup=1000,
                  draws=2000, walkers=64, seed=42, inclination_deg=None,
                  inclination_sigma_deg=None, optimizer_steps=(2500, 1500),
-                 device="cuda", max_velocity=1500.0, velocity_parameter="V_sini"):
+                 device="cuda", max_velocity=1000.0, velocity_parameter="V_sini"):
     """Copy source metadata, use explicit common parameter/settings definitions.
 
     Sample either the projected asymptotic amplitude V_sini (legacy default)
@@ -509,7 +509,7 @@ def parser():
     p.add_argument("--walkers", type=int, default=64)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--amp-step", type=float, default=25.0)
-    p.add_argument("--max-velocity", type=float, default=1500.0,
+    p.add_argument("--max-velocity", type=float, default=1000.0,
                    help="Uniform upper bound for the chosen sampled asymptotic amplitude (km/s).")
     p.add_argument("--velocity-parameter", choices=("V_sini", "V_rot"), default="V_sini",
                    help="Sample projected V_sini (legacy) or deprojected V_rot alongside inclination.")

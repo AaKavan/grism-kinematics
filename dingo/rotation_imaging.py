@@ -207,6 +207,44 @@ def _recoverable_native_crash(exc, variant, source_id):
         return False
 
 
+def _diagnostic_rejection_reasons(diagnostics):
+    """Explain a saved failed gate without changing or recomputing acceptance."""
+    reasons = []
+    if diagnostics.get('sampling_input_error'):
+        reasons.append(str(diagnostics['sampling_input_error']))
+    elif diagnostics.get('all_diagnostics_finite') is False:
+        reasons.append('some sampling diagnostics are nonfinite or inconsistent')
+    checks = (
+        ('chains', lambda value: value < 4, 'chains', 'at least 4'),
+        ('max_rank_rhat', lambda value: value >= 1.01, 'maximum rank Rhat', 'below 1.01'),
+        ('min_bulk_ess', lambda value: value < 400, 'minimum bulk ESS', 'at least 400'),
+        ('min_tail_ess', lambda value: value < 400, 'minimum tail ESS', 'at least 400'),
+        ('divergences', lambda value: value > 0, 'divergences', 'zero'),
+    )
+    for key, failed, label, requirement in checks:
+        value = diagnostics.get(key)
+        if value is not None and np.isfinite(value) and failed(value):
+            reasons.append(f'{label}={value:g} (requires {requirement})')
+    bfmi = np.asarray(diagnostics.get('bfmi_by_chain') or [], dtype=float)
+    if bfmi.size and np.isfinite(bfmi).all() and bfmi.min() < .3:
+        reasons.append(f'minimum BFMI={bfmi.min():g} (requires at least 0.3)')
+    if not reasons:
+        reasons.append('the saved sampler gate did not pass; detailed failure metrics are unavailable')
+    return reasons
+
+
+def _last_worker_log_line(path):
+    """Read a short log tail for an unfinished worker, never its entire output."""
+    try:
+        with path.open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell()-4096))
+            lines = stream.read().decode('utf-8', errors='replace').splitlines()
+        return next((line.strip()[:240] for line in reversed(lines) if line.strip()), '')
+    except OSError:
+        return ''
+
+
 def prepare_imaging(source_id, *, run=True, run_name='pysersic_v1', bundle=None, results=None,
                     config=None, imaging=None, device='cuda', warmup=1000, samples=2000,
                     cutout_size=181, fit_radius=2., chunk=50, seed=735,
@@ -348,13 +386,59 @@ class ImagingResults:
         return imaging_ready(self.path, self.source_id)
 
     def require_ready(self):
-        if not self.ready:
-            raise ValueError(f'ID{self.source_id}: PySersic fits are not yet accepted. '
-                'Inspect the imaging table and residuals above. Increase imaging draws for poor mixing; '
-                'set OVERRIDE=True to restart after changing warmup, aperture or model inputs. '
-                'A grism search requesting this imaging prior must wait for an accepted imaging fit. '
-                f'Reports and logs: {self.path}')
-        return self.path
+        """Require the existing gate, distinguishing worker failure from sampling diagnostics."""
+        if self.ready:
+            return self.path
+
+        # A reopened result may not have the in-memory subprocess exception.
+        # Shared morphology records that exception separately from imaging.json.
+        errors = {}
+        metadata = self.path/'morphology.json'
+        if metadata.exists():
+            try:
+                errors.update(read_json(metadata).get('worker_errors') or {})
+            except (OSError, ValueError):
+                pass
+        errors.update(self.errors)
+
+        details, completed_failure, divergent = [], False, False
+        for name, _ in self.variants:
+            if _variant_ready(self.path/name, self.source_id):
+                continue
+            report = self.reports.get(name, {})
+            log = self.path/f'{name}.log'
+            if not report.get('completed'):
+                phase = report.get('phase', 'not recorded')
+                message = f'{name}: no completed posterior was saved; last phase: {phase}.'
+                if errors.get(name):
+                    message += f' Worker error: {errors[name]}.'
+                tail = _last_worker_log_line(log)
+                if tail:
+                    message += f' Last log line: {tail}.'
+                details.append(f'{message} Inspect worker log: {log}')
+                continue
+
+            completed_failure = True
+            reasons = []
+            diagnostics = report.get('diagnostics') or {}
+            if not diagnostics.get('convergence_gate_passed'):
+                reasons.extend(_diagnostic_rejection_reasons(diagnostics))
+                divergent |= (diagnostics.get('divergences') or 0) > 0
+            if not report.get('orientation_parameterization_ok'):
+                reasons.append('orientation/radius boundary checks failed or are missing')
+            if not (self.path/name/'samples.npz').exists():
+                reasons.append('samples.npz is missing')
+            details.append(f'{name}: sampling completed, but ' + '; '.join(reasons) + '.')
+
+        guidance = ''
+        if completed_failure:
+            guidance = ' Inspect the reported diagnostics and image residuals.'
+            if divergent:
+                guidance += ' Adding draws cannot remove already recorded divergences.'
+            guidance += (' For fresh sampling through fit_morphology, use refit=True; '
+                         'this preserves the previous morphology fit.')
+        raise ValueError(f'ID{self.source_id}: PySersic fits are not yet accepted. '
+                         + ' '.join(details) + guidance + f' Reports: {self.path}')
 
     def summary(self):
         import pandas as pd
@@ -596,6 +680,81 @@ class ImagingResults:
             directory.mkdir(parents=True, exist_ok=True)
             for suffix in ('png', 'pdf'):
                 fig.savefig(directory/f'{name}.{suffix}', dpi=150, bbox_inches='tight')
+
+    def center_figure(self, variant='full_pixel', *, save=False, annotate_center=True):
+        """Show calibrated image and saved model with the posterior center.
+
+        Coordinates are zero-based pixels of the fitted imaging cutout: x is
+        column and y is row. They are not registered R/C-stack coordinates.
+        The marker and text use pooled median and 16th/84th percentiles of the
+        saved physical PySersic samples. The saved model is shown as produced
+        by the imaging worker; this display does not rerender or refit it.
+
+        Both panels share one display normalization. Asinh scaling is applied
+        by Matplotlib only, never to the flux values used in inference. No
+        residual panel is created. A saved posterior is required so a point
+        estimate cannot accidentally be presented with posterior errors.
+        Set annotate_center=False to keep the marker without printing its
+        imaging-pixel coordinates; the underlying posterior is unchanged.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import AsinhNorm
+
+        report = self._report(variant)
+        self._check_inputs(report)
+        samples = self._physical_samples(variant)
+        fit_path = self.path/variant/'fit.npz'
+        if not fit_path.exists():
+            raise FileNotFoundError(f'No saved PySersic prediction yet: {fit_path}')
+        if report.get('fit_sha256') and sha256(fit_path) != report['fit_sha256']:
+            raise ValueError(f'Imaging prediction checksum changed: {fit_path}')
+        with np.load(fit_path, allow_pickle=False) as arrays:
+            data, model, mask = (arrays[name] for name in ('image', 'model', 'mask'))
+        if data.ndim != 2 or model.shape != data.shape or mask.shape != data.shape:
+            raise ValueError('Imaging prediction arrays have inconsistent shapes.')
+        valid = ~mask.astype(bool) & np.isfinite(data) & np.isfinite(model)
+        if not valid.any():
+            raise ValueError('No valid imaging pixels in the fitting aperture.')
+
+        quantiles = {name: np.quantile(samples[name], [.16, .5, .84])
+                     for name in ('xc', 'yc')}
+        center = [quantiles[name][1] for name in ('xc', 'yc')]
+        lines = []
+        for name, label in (('xc', 'x_c'), ('yc', 'y_c')):
+            low, median, high = quantiles[name]
+            minus, plus = median-low, high-median
+            positive = [value for value in (minus, plus) if value > 0]
+            precision = (min(6, max(3, 1-int(np.floor(np.log10(min(positive))))))
+                         if positive else 3)
+            lines.append(rf'${label}={median:.{precision}f}'
+                         rf'_{{-{minus:.{precision}f}}}^{{+{plus:.{precision}f}}}$ px')
+        annotation = '\n'.join(lines)
+        low, high = np.quantile(data[valid], [.02, .995])
+        norm = AsinhNorm(linear_width=max((high-low)/20, 1e-12),
+                         vmin=low, vmax=max(high, low+1e-12))
+        fig, axes = plt.subplots(1, 2, figsize=(11, 5), layout='constrained')
+        cmap = plt.get_cmap('gist_heat').with_extremes(bad='white')
+        for ax, values, title in zip(axes, (data, model),
+                                      ('F150W observed', 'PySersic model')):
+            ax.imshow(np.ma.masked_invalid(values), origin='lower', cmap=cmap, norm=norm)
+            marker, = ax.plot(*center, marker='+', color='cyan', markersize=16,
+                              markeredgewidth=2, linestyle='none')
+            marker.set_gid('pysersic-center')
+            if annotate_center:
+                ax.text(.03, .03, annotation, transform=ax.transAxes, color='white',
+                        va='bottom', fontsize=11,
+                        bbox=dict(facecolor='black', alpha=.75, edgecolor='none', pad=5))
+            if not valid.all():
+                ax.contour(valid, levels=[.5], colors='lime', linewidths=.7)
+            ax.set(title=title, xlabel='Imaging x [pixel, zero-based]',
+                   ylabel='Imaging y [pixel, zero-based]')
+        title = (f'ID{self.source_id}: PySersic center; median and 16–84% intervals\n'
+                 'F150W cutout coordinates, not the R/C-stack x0,y0 coordinates'
+                 if annotate_center else
+                 f'ID{self.source_id}: PySersic image and model — F150W imaging frame')
+        fig.suptitle(title)
+        self._save_review_figure(fig, f'{variant}_center', save)
+        return fig
 
     def figure(self):
         import matplotlib.pyplot as plt

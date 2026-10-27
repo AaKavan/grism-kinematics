@@ -1,0 +1,23 @@
+{
+  "schema": "dingo-region-background-fill-v1",
+  "status": "complete",
+  "fits_path": "/home/aakavan/kinematics/grism-kinematics/data/ID6170/C.fits",
+  "backup_path": "/home/aakavan/kinematics/grism-kinematics/data/ID6170/C_original_before_region_fill.fits",
+  "report_path": "/home/aakavan/kinematics/grism-kinematics/data/ID6170/C_background_fill.json",
+  "region_path": "/home/aakavan/kinematics/grism-kinematics/data/ID6170/C_mask.reg",
+  "region_text": "# Region file format: DS9 version 4.1\r\nglobal color=green dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\r\nphysical\r\ncircle(47.698245,25.656347,6.4480075)\r\n",
+  "original_sha256": "fbbc4976ab14067e075afdfbc257949ea608764393352d00e80227cef34e3eed",
+  "filled_sha256": "53dde95babb1728072379c9ab34374bde0d9eba47bfd2aae8451f0067ceae9eb",
+  "previous_sha256": "fbbc4976ab14067e075afdfbc257949ea608764393352d00e80227cef34e3eed",
+  "region_sha256": "b8a475834afe18a0dae9f024242e3492584510edc248075011bd60f1ccc11f15",
+  "pixels_replaced": 131,
+  "border_width": 10,
+  "background_pixels_before_clipping": 2840,
+  "background_pixels_used": 2823,
+  "background_median": -7.626857970737749e-05,
+  "stored_fill_value": -7.626857970737749e-05,
+  "background_sigma": 0.003540957885177378,
+  "sigma_clip": 3.0,
+  "sigma_clip_maxiters": 10,
+  "created_utc": "2026-10-27T00:46:37.457173+00:00"
+}

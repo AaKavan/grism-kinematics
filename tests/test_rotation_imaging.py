@@ -121,6 +121,61 @@ def test_inspect_only_makes_no_files(source, monkeypatch):
     assert not source.directory.exists()
 
 
+def _single_rejected_result(path, report):
+    (path/'full_pixel').mkdir(parents=True)
+    (path/imaging.VARIANT_METADATA).write_text(json.dumps(
+        dict(source_id=8910, variants=['full_pixel'])))
+    (path/'full_pixel/imaging.json').write_text(json.dumps(dict(source_id=8910, **report)))
+    return imaging.ImagingResults(path, 8910)
+
+
+def test_worker_abort_reports_native_error_instead_of_convergence_advice(tmp_path):
+    result = _single_rejected_result(tmp_path, dict(completed=False, phase='initialization'))
+    (tmp_path/'morphology.json').write_text(json.dumps(
+        dict(worker_errors={'full_pixel': 'Job exited with code -6'})))
+    (tmp_path/'full_pixel.log').write_text('Initializing PySersic\nfree(): invalid size\n')
+    with pytest.raises(ValueError) as error:
+        result.require_ready()
+    message = str(error.value)
+    assert 'no completed posterior' in message and 'initialization' in message
+    assert 'code -6' in message and 'free(): invalid size' in message
+    assert str(tmp_path/'full_pixel.log') in message
+    assert 'Increase' not in message and 'OVERRIDE' not in message and 'refit=True' not in message
+    assert not result.ready
+
+
+def test_completed_divergent_fit_identifies_the_only_failed_metric(tmp_path):
+    result = _single_rejected_result(tmp_path, dict(completed=True,
+        diagnostics=dict(convergence_gate_passed=False, all_diagnostics_finite=True,
+            chains=4, max_rank_rhat=1.00094, min_bulk_ess=4057., min_tail_ess=3374.,
+            divergences=1, bfmi_by_chain=[1.08, 1., .97, .99]),
+        orientation_parameterization_ok=True))
+    np.savez(tmp_path/'full_pixel/samples.npz', q=np.full((4, 10), .93))
+    with pytest.raises(ValueError) as error:
+        result.require_ready()
+    message = str(error.value)
+    assert 'sampling completed' in message and 'divergences=1 (requires zero)' in message
+    assert 'maximum rank Rhat' not in message and 'minimum bulk ESS' not in message
+    assert 'Adding draws cannot remove' in message and 'refit=True' in message
+    assert 'OVERRIDE' not in message
+    assert not result.ready
+
+
+def test_completed_fit_lists_mixing_and_boundary_failures(tmp_path):
+    result = _single_rejected_result(tmp_path, dict(completed=True,
+        diagnostics=dict(convergence_gate_passed=False, chains=4,
+            max_rank_rhat=1.03, min_bulk_ess=70., min_tail_ess=200.,
+            divergences=0, bfmi_by_chain=[.1, .5, .6, .7]),
+        orientation_parameterization_ok=False))
+    with pytest.raises(ValueError) as error:
+        result.require_ready()
+    message = str(error.value)
+    for text in ('Rhat=1.03', 'bulk ESS=70', 'tail ESS=200', 'BFMI=0.1',
+                 'boundary checks failed', 'samples.npz is missing'):
+        assert text in message
+    assert 'divergences=' not in message
+
+
 @pytest.mark.parametrize('override', [False, True])
 def test_native_crash_retries_once_from_committed_checkpoint(source, monkeypatch, override):
     calls = []

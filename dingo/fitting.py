@@ -1497,7 +1497,7 @@ class BaseFitter(ABC):
 
     def fit_MCMC(self, nwalkers=None, nsteps=None, nburn=None,
                  init_scatter=None, pool=None, moves=None, seed=None, vectorize=None,
-                 stage=None):
+                 stage=None, progress=False):
         '''
         Ensemble MCMC (emcee) over the free parameters of the current stage, plus
         any nuisance dims listed in mcmc_extra_param_names.
@@ -1508,6 +1508,11 @@ class BaseFitter(ABC):
 
         Settings come from the optional `mcmc:` block of the config, and the
         keyword arguments override those. Returns (flat_chain, flat_log_prob).
+
+        ``progress=True`` shows emcee's tqdm bars for warmup and retained draws;
+        ``progress='notebook'`` uses its Jupyter widget bars. The default stays
+        quiet for subprocess callers that already display progress from logs.
+        On resume, each bar counts only the steps still needed in that segment.
         '''
         emcee = _import_emcee()
         mc = self.config.get('mcmc') or {}
@@ -1896,6 +1901,13 @@ class BaseFitter(ABC):
 
         ndone = start_step
         remaining = max(0, nburn + nsteps - start_step)
+        if seed is not None and start_step == 0:
+            # emcee has its own legacy RandomState. Seeding only the walker
+            # cloud above leaves fresh runs dependent on unrelated NumPy calls.
+            # Derive a compatible seed without changing NumPy's global RNG or
+            # replacing the sampler state of a resumed chain.
+            sampler_seed = int(rng.integers(0, 2**32))
+            sampler.random_state = np.random.RandomState(sampler_seed).get_state()
         try:
             if remaining:
                 initial_state = resume_state if resume_state is not None else p0
@@ -1908,7 +1920,11 @@ class BaseFitter(ABC):
                 for niter, is_burn in segments:
                     if niter <= 0:
                         continue
-                    for i, state in enumerate(sampler.sample(state, iterations=niter, progress=False)):
+                    progress_options = ({'desc': 'Warmup' if is_burn else 'MCMC draws'}
+                                        if progress else None)
+                    for i, state in enumerate(sampler.sample(
+                            state, iterations=niter, progress=progress,
+                            progress_kwargs=progress_options)):
                         ndone += 1
                         if ndone == start_step + 1 or ndone % cadence == 0:
                             LOG.info(

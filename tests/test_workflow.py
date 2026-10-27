@@ -106,7 +106,8 @@ def saved_search(path, source_id=123, mean=32., sigma=5., run=None):
         summary.update(mode="kinematics", unit="pix", r_fit=int(summary.get("r_fit", 10)))
         identity = {
             "source_id": source_id,
-            "inputs": {key: record["inputs"][key] for key in ("image", "R", "C")},
+            "inputs": {key: value for key, value in record["inputs"].items()
+                       if key in ("image", "R", "C") or key.startswith("mask_")},
             "config": {
                 "summary": summary,
                 "image": {pupil: {"module": original["image"][pupil]["module"],
@@ -127,6 +128,73 @@ def saved_search(path, source_id=123, mean=32., sigma=5., run=None):
     }
     (path / "search_config.yaml").write_text(yaml.safe_dump(config))
     return report
+
+
+def test_input_mask_creates_reusable_sibling_and_preserves_original(make_run, inputs):
+    original = make_run(run_name="unmasked")
+    marker = original.search_directory / "original_result.txt"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("Keep the original candidate search")
+    record = workflow._record(original)
+    record["imaging"] = {"directory": "shared_morphology", "prior": {"inclination_deg": 30.}}
+    workflow._write_record(original, record)
+    before = file_hashes(original.directory)
+    region = inputs / "ID123" / "C_mask.reg"
+    region.write_text("image\ncircle(7,6,2)\n")
+
+    masked = workflow.with_input_masks(original, C=region)
+    assert masked.directory != original.directory
+    assert masked.directory.parent == original.directory.parent
+    assert file_hashes(original.directory) == before
+    assert masked.configuration["parent_search"] is None
+    assert workflow._record(masked)["imaging"] == record["imaging"]
+    assert workflow._record(masked)["inputs"]["mask_C"]["sha256"] == workflow.sha256(region)
+    assert workflow.with_input_masks(masked, C=region) == masked
+    assert workflow.with_input_masks(original, C=region) == masked
+
+
+def test_revised_region_gets_new_sibling_and_stale_run_cannot_search(make_run, inputs, monkeypatch):
+    original = make_run(run_name="unmasked")
+    region = inputs / "ID123" / "C_mask.reg"
+    region.write_text("image\ncircle(7,6,2)\n")
+    first = workflow.with_input_masks(original, C=region)
+    before = file_hashes(first.directory)
+    region.write_text("image\ncircle(7,6,3)\n")
+    second = workflow.with_input_masks(first, C=region)
+    assert second.directory != first.directory
+    assert second.directory.name.startswith("unmasked_masked_")
+    assert second.directory.name.count("_masked_") == 1
+    assert file_hashes(first.directory) == before
+    monkeypatch.setattr(workflow, "run_command", lambda *a, **k: pytest.fail("Started a worker with a stale mask"))
+    with pytest.raises(ValueError, match="mask_C input is missing or changed"):
+        workflow.find_candidates(first)
+
+
+def test_input_mask_cannot_reuse_unmasked_parent(make_run, inputs, tmp_path):
+    original = make_run()
+    parent = tmp_path / "unmasked_search"
+    saved_search(parent, run=original)
+    region = inputs / "ID123" / "C_mask.reg"
+    region.write_text("image\ncircle(7,6,2)\n")
+    with pytest.raises(ValueError, match="different C input mask"):
+        make_run(run_name="masked", input_masks={"C": region}, parent_search=parent)
+
+
+def test_search_worker_receives_recorded_input_mask(make_run, inputs, monkeypatch):
+    region = inputs / "ID123" / "C_mask.reg"
+    region.write_text("image\ncircle(7,6,2)\n")
+    run = make_run(input_masks={"C": region})
+    calls = []
+
+    def worker(arguments, log_path, *, device):
+        calls.append(arguments)
+        saved_search(run.search_directory, run=run)
+
+    monkeypatch.setattr(workflow, "run_command", worker)
+    workflow.find_candidates(run)
+    args = calls[0]
+    assert args[args.index("--mask-c") + 1] == str(region.resolve())
+    assert "--mask-r" not in args
 
 
 def fake_sampler(run, calls):

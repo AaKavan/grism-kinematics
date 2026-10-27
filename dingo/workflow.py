@@ -47,6 +47,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import math
 from numbers import Integral, Real
@@ -230,6 +231,32 @@ def _check_inputs(record):
             raise ValueError(f"The recorded {name} input is missing or changed: {path}. Use a new run.")
 
 
+def _input_mask_records(input_masks, input_paths):
+    """Validate source-pixel DS9 regions and record their exact content identity.
+
+    The returned masks describe pixels to exclude, not zero-valued emission.
+    Validation happens before any run directory is created or overwritten.
+    """
+    if input_masks is None:
+        return {}
+    if not isinstance(input_masks, Mapping) or set(input_masks) - {"R", "C"}:
+        raise ValueError("input_masks must map 'R' and/or 'C' to DS9 region paths.")
+    from astropy.io import fits
+    from .input_masks import read_ds9_exclusion
+
+    records = {}
+    for pupil, value in sorted(input_masks.items()):
+        path = _path(value)
+        with fits.open(input_paths[pupil]) as hdus:
+            mask = read_ds9_exclusion(path, hdus[0].data.shape, header=hdus[0].header)
+        if not mask.any():
+            raise ValueError(f"The {pupil} region excludes no input pixels: {path}")
+        if mask.all():
+            raise ValueError(f"The {pupil} region excludes the entire input image: {path}")
+        records[pupil] = dict(path=str(path), sha256=sha256(path))
+    return records
+
+
 def _check_stage(record, name, settings):
     """Allow only an increased retained-step target when resuming sampling."""
     previous = record["stages"].get(name)
@@ -279,7 +306,7 @@ def prepare_source(
     inclination_mode="imaging_prior", inclination_deg=None,
     inclination_sigma_deg=5.0, start_velocity_kms=None,
     start_inclination_deg=None, parent_search=None, data_dir=None,
-    config_path=None, device="cuda", notes="", overwrite=False,
+    config_path=None, device="cuda", notes="", overwrite=False, input_masks=None,
 ) -> Run:
     """Create or reopen one identified experiment, without fitting anything.
 
@@ -311,6 +338,10 @@ def prepare_source(
         Defaults to repository data and its source-specific YAML, respectively.
     device : {'cuda', 'cpu'}
         Likelihood execution device. CUDA requires the grism environment/GPU.
+    input_masks : mapping, optional
+        DS9 exclusion regions in original R/C input-pixel coordinates, for
+        example ``{'C': '/path/to/C_mask.reg'}``. These exclusions apply to
+        candidate search and MCMC; the original FITS files remain unchanged.
     notes : str
         Scientific rationale or observational notes, saved verbatim.
     overwrite : bool, default False
@@ -365,6 +396,8 @@ def prepare_source(
         raise ValueError("Configuration belongs to a different source.")
     paths = {name: data / f"ID{sid}" / f"{name}.fits" for name in ("image", "R", "C")}
     paths["config"] = config
+    mask_records = _input_mask_records(input_masks, paths)
+    paths.update({f"mask_{pupil}": Path(info["path"]) for pupil, info in mask_records.items()})
     parent = _path(parent_search) if parent_search is not None else None
     for path in [*paths.values(), *([parent] if parent else [])]:
         if path.resolve().is_relative_to(run.directory):
@@ -377,6 +410,9 @@ def prepare_source(
         inclination_sigma_deg=sigma, start_velocity_kms=start_velocity_kms,
         start_inclination_deg=start_inclination_deg,
         parent_search=str(parent) if parent else None)
+    # Keep unmasked records byte-compatible with the original interface.
+    if mask_records:
+        configuration["input_masks"] = mask_records
     record = dict(schema=SCHEMA, source_id=sid, run_name=run_name,
                   configuration=configuration, inputs=inputs, created_utc=_utc(),
                   status="prepared", stages={}, notes=notes,
@@ -414,6 +450,63 @@ def prepare_source(
     return run
 
 
+def with_input_masks(run: Run, *, C=None, R=None, run_name=None) -> Run:
+    """Create/reopen a masked experiment while preserving the original run.
+
+    ``C`` and ``R`` are DS9 files drawn on the original grism cutouts. Existing
+    masks for unspecified grisms are retained. The default new directory name
+    includes a mask-identity suffix; rerunning the same cell reuses that run.
+    A changed region creates another sibling experiment instead of reusing an
+    unmasked search or deleting results. No search or sampling is started.
+
+    Assign the returned handle, e.g. ``run = with_input_masks(run, C=path)``.
+    Subsequent ``find_candidates`` and ``fit_source`` calls use its exclusions.
+    Any attached imaging prior is retained because the imaging data did not
+    change. External candidate searches are not inherited by the new run.
+    """
+    if C is None and R is None:
+        raise ValueError("Provide a C and/or R DS9 region file.")
+    record = _record(run)
+    # A revised region is allowed here, but changed science/config inputs are
+    # not. Existing mask hashes are checked only if reusing that exact run.
+    base_inputs = {key: value for key, value in record["inputs"].items()
+                   if not key.startswith("mask_")}
+    _check_inputs({"inputs": base_inputs})
+    choice = record["configuration"]
+    paths = {pupil: info["path"] for pupil, info in choice.get("input_masks", {}).items()}
+    paths.update({pupil: value for pupil, value in (("R", R), ("C", C)) if value is not None})
+    masks = _input_mask_records(paths, {pupil: base_inputs[pupil]["path"] for pupil in ("R", "C")})
+    if masks == choice.get("input_masks") and (run_name is None or run_name == run.directory.name):
+        _check_inputs(record)
+        return run
+
+    origin = record.get("input_mask_origin", dict(directory=str(run.directory), run_name=run.directory.name))
+    if run_name is None:
+        token = hashlib.sha256(json.dumps(masks, sort_keys=True).encode()).hexdigest()[:10]
+        run_name = f"{origin['run_name']}_masked_{token}"
+    if run_name == run.directory.name:
+        raise ValueError("Use a different run_name for changed masks; existing results are preserved.")
+    new_run = prepare_source(
+        run.source_id, working_dir=run.directory.parent.parent, run_name=run_name,
+        inclination_mode=choice["inclination_mode"], inclination_deg=choice["inclination_deg"],
+        inclination_sigma_deg=choice["inclination_sigma_deg"],
+        start_velocity_kms=choice["start_velocity_kms"],
+        start_inclination_deg=choice["start_inclination_deg"],
+        data_dir=choice["data_dir"], config_path=choice["config_path"], device=choice["device"],
+        input_masks=paths, notes=record.get("notes", ""),
+    )
+    with _locked(new_run):
+        new_record = _record(new_run)
+        new_record.setdefault("input_mask_origin", origin)
+        attached = record.get("imaging")
+        if attached is not None and "imaging" not in new_record:
+            new_record["imaging"] = attached
+        _write_record(new_run, new_record)
+    print("Input masks apply to candidate search and MCMC.", flush=True)
+    print(f"Masked run: {new_run.directory}", flush=True)
+    return new_run
+
+
 def load_run(directory) -> Run:
     """Read an existing run handle; do not launch jobs or require raw inputs."""
     directory = _path(directory)
@@ -447,6 +540,10 @@ def _validate_search(run, record, directory):
     for name in ("image", "R", "C"):
         if identity.get("inputs", {}).get(name) != record["inputs"][name]:
             raise ValueError(f"The parent search used different {name} inputs.")
+    for pupil in ("R", "C"):
+        name = f"mask_{pupil}"
+        if identity.get("inputs", {}).get(name) != record["inputs"].get(name):
+            raise ValueError(f"The parent search used a different {pupil} input mask.")
     import yaml
     source_config = yaml.safe_load(Path(record["configuration"]["config_path"]).read_text())
     wanted = dict(source_config["summary"])
@@ -655,6 +752,30 @@ def show_inputs(run: Run, *, display=True) -> dict:
     return views
 
 
+def show_input_masks(run: Run, *, display=True) -> dict:
+    """Display the saved input exclusions with red/orange grism heatmaps.
+
+    Axes refer to original, zero-based cutout pixels. Masked pixels appear as
+    missing measurements, not measured zeros. This is a preview of the input
+    regions; the fitter additionally accounts for their remapped footprint.
+    """
+    from astropy.io import fits
+    from .input_masks import read_ds9_exclusion, plot_input_masks
+
+    record = _record(run)
+    _check_inputs(record)
+    masks = {}
+    for pupil, info in record["configuration"].get("input_masks", {}).items():
+        with fits.open(record["inputs"][pupil]["path"]) as hdus:
+            masks[pupil] = read_ds9_exclusion(info["path"], hdus[0].data.shape, header=hdus[0].header)
+        print(f"{pupil}: excluding {int(masks[pupil].sum())} of {masks[pupil].size} input pixels; {info['path']}")
+    source_dir = Path(record["inputs"]["C"]["path"]).parent
+    views = {"input_masks": plot_input_masks(source_dir, masks)}
+    if display:
+        _display(views)
+    return views
+
+
 def show_imaging(run: Run, *, variant="full_pixel", display=True) -> dict:
     """Show fitting image, fit, native PySersic corner and q0=0/0.2 inclinations.
 
@@ -688,11 +809,13 @@ def _search_prior(record):
 
 def find_candidates(run: Run, *, velocity_step=25., n_angles=16, n_candidates=4,
                     refine_iterations=100, profile_iterations=80, profile_step=25.,
-                    profile_fine_step=1., profile_max=1000., max_velocity=1500.,
+                    profile_fine_step=1., profile_max=1000., max_velocity=1000.,
                     seed=42, pixel_scale_arcsec=.063):
     """Run/reopen a broad velocity/geometry search; do not start MCMC.
 
-    ``velocity_step`` is the coarse V_inf grid spacing. ``profile_fine_step``
+    ``max_velocity`` caps V_inf in both the search and its subsequent MCMC
+    (default 1000 km/s). ``velocity_step`` is the coarse V_inf grid spacing.
+    ``profile_fine_step``
     refines selected intervals of the finite-radius velocity profile, not every
     possible V_inf at 1 km/s. A finite search cannot guarantee all solutions.
     All saved candidates are available for inspection; fit_source requires an
@@ -735,6 +858,8 @@ def find_candidates(run: Run, *, velocity_step=25., n_angles=16, n_candidates=4,
             max_velocity="max-velocity", seed="seed", pixel_scale_arcsec="pixel-scale")
         for name, flag in flags.items():
             arguments += [f"--{flag}", str(settings[name])]
+        for pupil, info in choice.get("input_masks", {}).items():
+            arguments += [f"--mask-{pupil.lower()}", info["path"]]
         if prior:
             arguments += ["--inclination-deg", str(prior["inclination_deg"]),
                           "--inclination-sigma-deg", str(prior["inclination_sigma_deg"])]

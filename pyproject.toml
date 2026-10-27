@@ -20,6 +20,7 @@ dependencies = [
   "astropy",
   "matplotlib",
   "scipy",
+  "threadpoolctl>=3.1",
   "pyyaml",
 ]
 
@@ -28,6 +29,9 @@ dependencies = [
 # (fitting._import_emcee, plot._corner_fallback), so the gradient-fitting path
 # works without them. They are required for fit_MCMC and the corner plots.
 mcmc = ["emcee", "corner", "tqdm"]
+# Direct original-pixel R+C likelihood with the shared emission map sampled.
+direct-mcmc = ["jax>=0.4.30", "numpyro>=0.22", "arviz-stats>=1.0",
+               "corner", "pandas", "tqdm", "ipywidgets", "ipykernel"]
 native-posterior = ["jax>=0.4.30", "numpyro>=0.15", "arviz-stats>=1.0"]
 real-notebook = ["jax>=0.4.30", "numpyro>=0.15", "arviz-stats>=1.0", "pysersic",
                  "pandas", "ipywidgets", "ipykernel", "nbformat", "nbclient", "corner"]

@@ -45,6 +45,39 @@ The guide supplies imports and paths for these calls. Start with the runnable
 
 ## Notebooks
 
+The [direct source notebook](direct_source_fit.ipynb) applies the experimental
+direct R+C method to ID6170. Six code cells prepare inputs, find a starting fit,
+sample kinematics and a shared positive emission map jointly, and display
+saved residuals, black corner contours, traces and rotation-curve intervals.
+NumPyro NUTS uses JAX on CPU/GPU; inclination has an explicit Gaussian prior,
+and the center is fixed. Independent half-normal emission-pixel priors have an
+adjustable brightness scale, with no prescribed Sérsic shape or smoothing.
+Use separate `prepare`, `fit`, `sample`, and `show_posterior` calls for each
+named configuration. `load_run` reopens a handle after a kernel restart, and
+`sample(..., resume=True)` continues checkpointed warmup or retained draws.
+The [joint MCMC notes](docs/direct_joint_mcmc_2026-10-27.md) explain assumptions,
+saved products and the limited validation; passing numerical checks alone
+does not establish scientifically reliable error bars.
+The [ID6170 pilot notes](docs/direct_ID6170_2026-10-27.md) record both tested
+starting velocities, remaining input artifacts, and convergence limitations.
+
+The [real-pipeline simulation notebook](simulation_real_pipeline.ipynb) runs
+synthetic R/C observations through the same `direct.prepare`, `direct.fit`, and
+`direct.sample` calls used for real sources. The emission map is inferred from
+R+C; injected truth is used only for the final comparison. This first test keeps
+the center and input noise known and uses a Gaussian inclination prior. The
+last cell can display saved results without refitting.
+
+The [simulation recovery notebook](simulation_recovery.ipynb) generates a known
+rotation-only disk and fits direct predictions to its original R and C pixels.
+It first checks recovery with the emission map known, including conditional MCMC
+errors, then profiles over an independently fitted nonnegative pixel map without
+a Sérsic shape or smoothing prior. The latter stage has no marginalized posterior
+errors yet. It needs grism calibration files but no real source images. Results
+stay under `results/simulations/<experiment>/`. This experiment addresses the
+failed rectification-based injection test; the real-source fitter is unchanged.
+See the [injection recovery results and limitations](docs/injection_forward_2026-10-27.md).
+
 The [workflow demo](workflow_demo.ipynb) shows direct function calls for
 `run_a` and `run_b`: two named experiments for ID15665 with starting velocities
 of 400 and 450 km/s. Edit arguments where each function is called, and execute

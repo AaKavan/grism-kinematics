@@ -232,6 +232,7 @@ def _write_report(path, metadata):
               'full_pixel/samples.npz: posterior arrays, preserving chain/draw axes (when available)',
               'full_pixel/imaging.json: worker convergence report and checkpoint identity (when available)',
               'full_pixel.log: worker progress and error messages',
+              'corner.png and corner.pdf: native PySersic corner plot in this fit directory (when available)',
               'figures/: input image, fit/residual view and native PySersic corner plot (when available)', '']
     info_path = path / f'pysersic_{identity["source_id"]}_info.cat'
     _atomic_text(info_path, '\n'.join(lines))
@@ -253,20 +254,26 @@ def _input_preview(result, *, fit_radius, display):
     plt.close(figure)
 
 
-def _review(result, *, display):
+def _review(result, *, display, center_reference=False, show_center_values=True):
     """Save native review plots and return plotting errors without losing a fit."""
     import matplotlib.pyplot as plt
     errors = {}
     if display:
         from IPython.display import display as show
         show(result.summary())
-    for label, make in [('full_pixel_fit', result.figure),
+    fit_view = (('full_pixel_center', lambda: result.center_figure(
+                    annotate_center=show_center_values)) if center_reference else
+                ('full_pixel_fit', result.figure))
+    for label, make in [fit_view,
                         ('full_pixel_corner', lambda: result.corner('full_pixel'))]:
         if label.endswith('corner') and not (result.path/'full_pixel/samples.npz').exists():
             continue
         try:
             figure = make()
             result._save_review_figure(figure, label, True)
+            if label.endswith('corner'):
+                for suffix in ('png', 'pdf'):
+                    figure.savefig(result.path/f'corner.{suffix}', dpi=150, bbox_inches='tight')
             if display:
                 show(figure)
             plt.close(figure)
@@ -274,14 +281,18 @@ def _review(result, *, display):
             errors[label] = f'{type(exc).__name__}: {exc}'
             print(f'Could not make {label}: {exc}. Saved sampling results are retained.', flush=True)
     if display and (result.path/'parameters.txt').exists():
-        show(result.parameter_summary('full_pixel', q0=0.))
+        parameters = result.parameter_summary('full_pixel', q0=0.)
+        if not show_center_values:
+            parameters = parameters.drop(index=['xc', 'yc'], errors='ignore')
+        show(parameters)
         show(result.inclination_summary('full_pixel', q0_values=(0., .2)))
     return errors
 
 
 def fit_morphology(source_id, *, directory, config_path, refit=False, device='cuda',
                    warmup=1000, draws=2000, seed=735, fit_radius=2., cutout_size=181,
-                   chunk=50, science=None, error=None, psf=None, bundle=None, display=True):
+                   chunk=50, science=None, error=None, psf=None, bundle=None, display=True,
+                   center_reference=False, show_center_values=True):
     """Fit or reuse a source's F150W morphology, independently of kinematic runs.
 
     Parameters
@@ -319,6 +330,16 @@ def fit_morphology(source_id, *, directory, config_path, refit=False, device='cu
     display : bool
         Show the input before sampling and the fit, native corner and tables
         afterward. Review products are saved even when display is false.
+    center_reference : bool
+        Show image/model panels annotated with posterior center coordinates
+        instead of the image/model/residual view. Native corner and parameter
+        tables are unchanged. This is display-only and does not change cache
+        identity, sampling, or automatic acceptance of an imaging prior.
+    show_center_values : bool
+        Print the imaging-pixel center in the center-reference figure and
+        displayed parameter table. False hides those values while retaining
+        the center marker, complete native corner plot and saved parameters.
+        This display-only choice does not change the cached posterior.
 
     Returns
     -------
@@ -334,6 +355,10 @@ def fit_morphology(source_id, *, directory, config_path, refit=False, device='cu
     """
     if not isinstance(refit, bool) or not isinstance(display, bool):
         raise ValueError('refit and display must be True or False.')
+    if not isinstance(center_reference, bool):
+        raise ValueError('center_reference must be True or False.')
+    if not isinstance(show_center_values, bool):
+        raise ValueError('show_center_values must be True or False.')
     if device not in ('cpu', 'cuda'):
         raise ValueError('device must be cpu or cuda.')
     for name, value in dict(warmup=warmup, draws=draws, chunk=chunk).items():
@@ -382,7 +407,8 @@ def fit_morphology(source_id, *, directory, config_path, refit=False, device='cu
                     # Keep prior attempt errors as evidence of that exit.
                 print(f'Reusing F150W morphology for ID{source.source_id}: {output}', flush=True)
                 _input_preview(result, fit_radius=fit_radius, display=display)
-                metadata['review_errors'] = _review(result, display=display)
+                metadata['review_errors'] = _review(result, display=display,
+                    center_reference=center_reference, show_center_values=show_center_values)
                 info_path = output / f'pysersic_{source.source_id}_info.cat'
                 if _clean(metadata) != before or not info_path.exists():
                     _write_report(output, metadata)
@@ -410,7 +436,8 @@ def fit_morphology(source_id, *, directory, config_path, refit=False, device='cu
                                   if metadata['worker_completed'] else 'failed')
             if metadata['worker_completed']:
                 metadata['finished_at'] = _utc_now()
-            metadata['review_errors'] = _review(result, display=display)
+            metadata['review_errors'] = _review(result, display=display,
+                center_reference=center_reference, show_center_values=show_center_values)
         except BaseException as exc:
             metadata.update(status='interrupted' if isinstance(exc, KeyboardInterrupt) else 'failed',
                             error=f'{type(exc).__name__}: {exc}')

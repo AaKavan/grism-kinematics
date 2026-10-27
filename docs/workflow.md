@@ -76,6 +76,45 @@ run_a = wf.prepare_source(
 wf.show_inputs(run_a)
 ```
 
+To exclude a contaminant drawn on an original R or C stamp in DS9, insert a
+separate cell after the input display:
+
+```python
+run_a = wf.with_input_masks(run_a, C=DATA_DIR / "ID6170" / "C_mask.reg")
+wf.show_input_masks(run_a)
+```
+
+The region file marks unwanted pixels; ordinary positive DS9 circles, ellipses,
+boxes and polygons in `image` or `physical` coordinates are supported. The
+preview uses red/orange heatmaps, cyan outlines and white excluded pixels.
+`with_input_masks` returns a separate run whose name contains a mask hash.
+Existing FITS and unmasked results are preserved. Repeating the cell reuses the
+same masked run; editing the region creates another run. Supply `R=...` as well
+when needed. Candidate search and MCMC both use the attached masks.
+
+The input preview shows exactly the drawn region. For fitting, DINGO excludes
+its full possible remapped footprint over the velocity and registration prior
+support, including interpolation neighbors. This fixed comparison exclusion is
+larger than the drawn region and can remove useful galaxy pixels too. Its size
+is logged and it is saved in `comparison.npz`; residual plots show the actual
+comparison mask. This conservative choice keeps the scored area identical for
+all candidates and draws. Masked intensities are not treated as zero emission.
+
+For ID6170, that expanded mask removed substantial central emission. The
+separate `field_kinematics/edr_kinematics/masking.ipynb` now prepares the input
+file instead; `dingo_runs.ipynb` only fits already-prepared files. The user
+confirmed the whole drawn circle contains only artifact/background.
+`dingo.input_masks.replace_region_with_background(C_path, region_path)` replaces
+only those input pixels with the sigma-clipped median of the outer 10-pixel
+border. It preserves `C_original_before_region_fill.fits`, writes exact region
+and file hashes/statistics to `C_background_fill.json`, and is safe to rerun.
+`plot_background_replacement(C_path, report)` shows the actual before/after
+values. Run this before `prepare_source` so the repaired FITS hash is recorded;
+use a new run and do not attach `with_input_masks` for this test. This repair
+assumes no galaxy emission beneath the patch; inferred errors remain conditional
+on that assumption. It is not a general replacement for masking missing source
+measurements.
+
 Fit and inspect the morphology in a separate cell:
 
 ```python
@@ -146,6 +185,14 @@ uses `fit_morphology` throughout and requires no historical imaging directories.
 wf.find_candidates(run_a)
 wf.show_candidates(run_a)
 ```
+
+New searches cap the deprojected asymptotic velocity at **1,000 km/s**, with
+**25 km/s** coarse amplitude and finite-radius profile spacing. The profile
+also refines selected intervals at 1 km/s; local optimization is continuous.
+The cap becomes the subsequent MCMC prior bound and sets the input-mask
+footprint coverage. These settings are explicit arguments, for example
+`wf.find_candidates(run_a, max_velocity=1000, velocity_step=25, profile_step=25)`.
+Saved or externally attached searches retain their recorded bounds.
 
 After inspecting the candidates, put your chosen ID directly in the next call:
 
